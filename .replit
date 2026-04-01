@@ -30,12 +30,12 @@ args = "Solana Trading Bot"
 name = "Solana Trading Bot"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd solana-bot && python3 bot.py"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd solana-bot && python3 bot.py --live"
 
 [agent]
 stack = "PNPM_WORKSPACE"
