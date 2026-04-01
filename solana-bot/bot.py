@@ -531,167 +531,206 @@ def print_banner(paper_mode: bool, live_usdc: float | None = None):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_bot(paper_mode: bool):
-    public_key = None if paper_mode else os.getenv("WALLET_PUBLIC_KEY", "")
-    private_key = None if paper_mode else os.getenv("PRIVATE_KEY", "")
+    public_key  = None if paper_mode else (os.getenv("WALLET_PUBLIC_KEY") or "")
+    private_key = None if paper_mode else (os.getenv("PRIVATE_KEY") or "")
 
     if not paper_mode and not public_key:
         log.error("WALLET_PUBLIC_KEY missing — falling back to paper mode.")
         paper_mode = True
 
-    # Fetch live balance to show in banner
-    live_usdc_balance: float | None = None
+    # Initial balance fetch for banner (live mode only)
+    live_usdc_balance: float = 0.0
     if not paper_mode and public_key:
-        live_usdc_balance = get_live_usdc_balance(public_key)
+        fetched = get_live_usdc_balance(public_key)
+        live_usdc_balance = fetched if fetched is not None else 0.0
 
     wallet  = PaperWallet() if paper_mode else None
     history = PriceHistory(window=6)
     label   = "PAPER" if paper_mode else "LIVE"
 
-    print_banner(paper_mode, live_usdc_balance)
+    start_time        = datetime.datetime.utcnow()
+    starting_value    = STARTING_PAPER_BALANCE if paper_mode else live_usdc_balance
+    total_trades_done = 0
+
+    print_banner(paper_mode, live_usdc_balance if not paper_mode else None)
 
     cycle = 0
-    while True:
-        cycle += 1
-        log.info("─── Cycle %d [%s] ─────────────────────────────────────────────", cycle, label)
+    try:
+        while True:
+            cycle += 1
+            log.info("─── Cycle %d [%s] ─────────────────────────────────────────────", cycle, label)
 
-        # ── 1. Prices ────────────────────────────────────────────────────────
-        prices: dict[str, float] = {}
-        for token in FOCUS_TOKENS:
-            price = get_token_price_in_usdc(token)
-            if price is not None:
-                prices[token] = price
-                history.update(token, price)
-                log.info("  %s  $%.6f", token, price)
-            else:
-                log.warning("  %s  — price unavailable", token)
+            # ── 1. Prices ────────────────────────────────────────────────────
+            prices: dict[str, float] = {}
+            for token in FOCUS_TOKENS:
+                price = get_token_price_in_usdc(token)
+                if price is not None:
+                    prices[token] = price
+                    history.update(token, price)
+                    log.info("  %s  $%.6f", token, price)
+                else:
+                    log.warning("  %s  — price unavailable", token)
 
-        # ── 2. Wallet state ──────────────────────────────────────────────────
-        if paper_mode and wallet:
-            total = wallet.total_value_usdc(prices)
-            log.info(
-                "  Wallet — USDC: $%.4f | Holdings: %s | Total: $%.4f",
-                wallet.usdc,
-                {t: f"{a:.6f}" for t, a in wallet.holdings.items()},
-                total,
-            )
-            if wallet.usdc < CIRCUIT_BREAKER_USD and not wallet.holdings:
-                log.error(
-                    "  🚨 CIRCUIT BREAKER — balance $%.4f fell below $%.2f. Stopping.",
-                    wallet.usdc, CIRCUIT_BREAKER_USD,
+            # ── 2. Wallet state ──────────────────────────────────────────────
+            if paper_mode and wallet:
+                total = wallet.total_value_usdc(prices)
+                log.info(
+                    "  Wallet — USDC: $%.4f | Holdings: %s | Total: $%.4f",
+                    wallet.usdc,
+                    {t: f"{a:.6f}" for t, a in wallet.holdings.items()},
+                    total,
                 )
-                break
-
-        elif not paper_mode and public_key:
-            # Fetch real wallet balances from chain
-            live_usdc_balance = get_live_usdc_balance(public_key)
-            log.info("  Live wallet — USDC: $%.4f", live_usdc_balance)
-
-            if live_usdc_balance < CIRCUIT_BREAKER_USD:
-                # Check if there are any token holdings before stopping
-                any_holdings = any(
-                    get_live_token_balance(public_key, t) > 0 for t in FOCUS_TOKENS
-                )
-                if not any_holdings:
+                if wallet.usdc < CIRCUIT_BREAKER_USD and not wallet.holdings:
                     log.error(
-                        "  🚨 CIRCUIT BREAKER — live balance $%.4f below $%.2f. Stopping.",
-                        live_usdc_balance, CIRCUIT_BREAKER_USD,
+                        "  🚨 CIRCUIT BREAKER — balance $%.4f fell below $%.2f. Stopping.",
+                        wallet.usdc, CIRCUIT_BREAKER_USD,
                     )
                     break
 
-        # ── 3. Strategy & execution ──────────────────────────────────────────
-        for token in FOCUS_TOKENS:
-            if token not in prices:
-                continue
-
-            trend = history.trend(token)
-            if trend is None:
-                n = len(history.prices.get(token, []))
-                log.info("  %s  warming up (%d/%d)...", token, n, history.window)
-                continue
-
-            current_price = prices[token]
-
-            # Get holdings and balance — real chain data in live mode
-            if paper_mode and wallet:
-                holdings     = wallet.holdings.get(token, 0.0)
-                balance_usdc = wallet.usdc
             elif not paper_mode and public_key:
-                holdings     = get_live_token_balance(public_key, token)
-                balance_usdc = live_usdc_balance or 0.0
-            else:
-                continue
-
-            action, reason, trade_usdc = decide_trade(
-                token, trend, current_price, holdings, balance_usdc,
-            )
-            log.info("  %s  %s — %s", token, action, reason)
-
-            if action == "HOLD":
-                continue
-
-            trade_entry: dict = {
-                "timestamp":  datetime.datetime.utcnow().isoformat() + "Z",
-                "cycle":      cycle,
-                "mode":       label.lower(),
-                "token":      token,
-                "action":     action,
-                "price_usdc": current_price,
-                "trend_pct":  round(trend * 100, 4),
-                "reason":     reason,
-            }
-
-            # ── Paper execution ──────────────────────────────────────────────
-            if paper_mode and wallet:
-                if action == "BUY":
-                    bought = wallet.buy(token, trade_usdc, current_price)
-                    trade_entry.update(usdc_spent=round(trade_usdc, 6),
-                                       tokens_bought=round(bought, 6))
-                    log.info("  [PAPER] BUY  %.6f %s  cost $%.4f  @ $%.6f",
-                             bought, token, trade_usdc, current_price)
-                else:
-                    received = wallet.sell(token, holdings, current_price)
-                    trade_entry.update(tokens_sold=round(holdings, 6),
-                                       usdc_received=round(received, 6))
-                    log.info("  [PAPER] SELL %.6f %s  recv $%.4f  @ $%.6f",
-                             holdings, token, received, current_price)
-                save_trade(trade_entry)
-
-            # ── Live execution ───────────────────────────────────────────────
-            else:
-                if action == "BUY":
-                    raw_in = usdc_to_raw(trade_usdc)
-                    quote  = get_quote(TOKENS["USDC"], TOKENS[token], raw_in)
-                else:
-                    raw_in = int(holdings * 10 ** TOKEN_DECIMALS[token])
-                    quote  = get_quote(TOKENS[token], TOKENS["USDC"], raw_in)
-
-                if not quote:
-                    log.error("  [LIVE] No quote for %s %s — skipping", action, token)
-                    continue
-
+                fetched = get_live_usdc_balance(public_key)
+                if fetched is not None:
+                    live_usdc_balance = fetched
                 log.info(
-                    "  [LIVE] Quote: %s %s | in=%d out=%s",
-                    action, token, raw_in, quote.get("outAmount"),
+                    "  Live wallet — USDC: $%.4f%s",
+                    live_usdc_balance,
+                    "  (stale — RPC error)" if fetched is None else "",
                 )
+                if live_usdc_balance < CIRCUIT_BREAKER_USD:
+                    any_holdings = any(
+                        (get_live_token_balance(public_key, t) or 0) > 0
+                        for t in FOCUS_TOKENS
+                    )
+                    if not any_holdings:
+                        log.error(
+                            "  🚨 CIRCUIT BREAKER — live balance $%.4f below $%.2f. Stopping.",
+                            live_usdc_balance, CIRCUIT_BREAKER_USD,
+                        )
+                        break
 
-                swap_resp = build_swap_transaction(quote, public_key)
-                if not swap_resp:
-                    log.error("  [LIVE] Failed to build swap transaction")
-                    save_trade({**trade_entry, "error": "swap_build_failed"})
+            # ── 3. Strategy & execution ──────────────────────────────────────
+            for token in FOCUS_TOKENS:
+                if token not in prices:
                     continue
 
-                sig = sign_and_send(swap_resp, private_key)
-                trade_entry["tx_signature"] = sig
-                if sig:
-                    log.info("  [LIVE] ✅ %s %s executed — sig: %s", action, token, sig)
-                    log.info("  [LIVE]    View: https://solscan.io/tx/%s", sig)
+                trend = history.trend(token)
+                if trend is None:
+                    n = len(history.prices.get(token, []))
+                    log.info("  %s  warming up (%d/%d)...", token, n, history.window)
+                    continue
+
+                current_price = prices[token]
+
+                if paper_mode and wallet:
+                    holdings     = wallet.holdings.get(token, 0.0)
+                    balance_usdc = wallet.usdc
+                elif not paper_mode and public_key:
+                    holdings     = get_live_token_balance(public_key, token) or 0.0
+                    balance_usdc = live_usdc_balance
                 else:
-                    log.error("  [LIVE] ❌ %s %s FAILED — no signature returned", action, token)
+                    continue
 
-                save_trade(trade_entry)
+                action, reason, trade_usdc = decide_trade(
+                    token, trend, current_price, holdings, balance_usdc,
+                )
+                log.info("  %s  %s — %s", token, action, reason)
 
-        log.info("  Sleeping %ds...\n", LOOP_INTERVAL_SECONDS)
-        time.sleep(LOOP_INTERVAL_SECONDS)
+                if action == "HOLD":
+                    continue
+
+                total_trades_done += 1
+                trade_entry: dict = {
+                    "timestamp":  datetime.datetime.utcnow().isoformat() + "Z",
+                    "cycle":      cycle,
+                    "mode":       label.lower(),
+                    "token":      token,
+                    "action":     action,
+                    "price_usdc": current_price,
+                    "trend_pct":  round(trend * 100, 4),
+                    "reason":     reason,
+                }
+
+                # ── Paper execution ──────────────────────────────────────────
+                if paper_mode and wallet:
+                    if action == "BUY":
+                        bought = wallet.buy(token, trade_usdc, current_price)
+                        trade_entry.update(usdc_spent=round(trade_usdc, 6),
+                                           tokens_bought=round(bought, 6))
+                        log.info("  [PAPER] BUY  %.6f %s  cost $%.4f  @ $%.6f",
+                                 bought, token, trade_usdc, current_price)
+                    else:
+                        received = wallet.sell(token, holdings, current_price)
+                        trade_entry.update(tokens_sold=round(holdings, 6),
+                                           usdc_received=round(received, 6))
+                        log.info("  [PAPER] SELL %.6f %s  recv $%.4f  @ $%.6f",
+                                 holdings, token, received, current_price)
+                    save_trade(trade_entry)
+
+                # ── Live execution ───────────────────────────────────────────
+                else:
+                    if action == "BUY":
+                        raw_in = usdc_to_raw(trade_usdc)
+                        quote  = get_quote(TOKENS["USDC"], TOKENS[token], raw_in)
+                    else:
+                        raw_in = int(holdings * 10 ** TOKEN_DECIMALS[token])
+                        quote  = get_quote(TOKENS[token], TOKENS["USDC"], raw_in)
+
+                    if not quote:
+                        log.error("  [LIVE] No quote for %s %s — skipping", action, token)
+                        continue
+
+                    log.info("  [LIVE] Quote — %s %s | in=%d  out=%s",
+                             action, token, raw_in, quote.get("outAmount"))
+
+                    swap_resp = build_swap_transaction(quote, public_key)
+                    if not swap_resp:
+                        log.error("  [LIVE] Failed to build swap transaction")
+                        save_trade({**trade_entry, "error": "swap_build_failed"})
+                        continue
+
+                    sig = sign_and_send(swap_resp, private_key)
+                    trade_entry["tx_signature"] = sig
+                    if sig:
+                        log.info("  [LIVE] ✅ %s %s — sig: %s", action, token, sig)
+                        log.info("  [LIVE]    https://solscan.io/tx/%s", sig)
+                    else:
+                        log.error("  [LIVE] ❌ %s %s FAILED — no signature", action, token)
+                    save_trade(trade_entry)
+
+            log.info("  Sleeping %ds...\n", LOOP_INTERVAL_SECONDS)
+            time.sleep(LOOP_INTERVAL_SECONDS)
+
+    finally:
+        # ── Exit summary ─────────────────────────────────────────────────────
+        elapsed = datetime.datetime.utcnow() - start_time
+        minutes = int(elapsed.total_seconds() // 60)
+        seconds = int(elapsed.total_seconds() % 60)
+
+        if paper_mode and wallet:
+            end_value = wallet.total_value_usdc(prices if 'prices' in dir() else {})
+        elif not paper_mode and public_key:
+            end_value = get_live_usdc_balance(public_key) or live_usdc_balance
+        else:
+            end_value = starting_value
+
+        pnl        = end_value - starting_value
+        pnl_pct    = (pnl / starting_value * 100) if starting_value > 0 else 0
+        pnl_sign   = "+" if pnl >= 0 else ""
+        all_trades = load_trade_log()
+
+        print()
+        print("=" * 72)
+        print("  SESSION SUMMARY")
+        print("=" * 72)
+        print(f"  Mode          : {label}")
+        print(f"  Runtime       : {minutes}m {seconds}s  ({cycle} cycles)")
+        print(f"  Starting value: ${starting_value:.4f}")
+        print(f"  Ending value  : ${end_value:.4f}")
+        print(f"  P&L           : {pnl_sign}${pnl:.4f}  ({pnl_sign}{pnl_pct:.2f}%)")
+        print(f"  Trades this session : {total_trades_done}")
+        print(f"  All trades logged   : {len(all_trades)}  ({TRADE_LOG_FILE})")
+        print("=" * 72)
+        print()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -704,6 +743,5 @@ if __name__ == "__main__":
         paper_mode = select_mode(args)
         run_bot(paper_mode)
     except KeyboardInterrupt:
-        log.info("Bot stopped by user (Ctrl+C).")
-        log.info("Trades logged: %d  (see %s)", len(load_trade_log()), TRADE_LOG_FILE)
-        sys.exit(0)
+        pass   # summary already printed by run_bot's finally block
+    sys.exit(0)
