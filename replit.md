@@ -16,6 +16,17 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **API codegen**: Orval (from OpenAPI spec)
 - **Build**: esbuild (CJS bundle)
 
+## Solana Trading Bot
+
+A standalone Python trading bot in `solana-bot/`:
+- **Language**: Python 3.11
+- **Mode**: Paper trading (virtual $20 USDC) by default — no real money at risk
+- **Strategy**: Simple momentum via Jupiter Quote API prices (SOL, JUP, BONK)
+- **Safety**: 50% max risk per trade, circuit breaker at $5, 0.5% min threshold
+- **Files**: `bot.py` (main), `.env.example` (copy → .env), `trades.json` (auto-created log)
+- **Run**: Use the "Solana Trading Bot" workflow, or `cd solana-bot && python3 bot.py`
+- **Dependencies**: requests, python-dotenv, base58, solana, solders
+
 ## Structure
 
 ```text
