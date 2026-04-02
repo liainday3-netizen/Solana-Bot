@@ -706,10 +706,6 @@ def run_bot(paper_mode: bool):
                         for t in FOCUS_TOKENS
                     )
                     if not any_holdings:
-                        log.error(
-                            "  🚨 CIRCUIT BREAKER — live balance $%.4f below $%.2f. Stopping.",
-                            live_usdc_balance, CIRCUIT_BREAKER_USD,
-                        )
                         break
 
             # ── 3. Strategy & execution ──────────────────────────────────────
