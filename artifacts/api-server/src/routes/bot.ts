@@ -81,20 +81,24 @@ router.get("/bot/summary", (_req, res) => {
 });
 
 router.post("/bot/stop", (_req, res) => {
-  exec("pkill -SIGTERM -f 'python3 bot.py'", (err) => {
-    if (err) {
-      return res.status(200).json({ ok: true, message: "Bot was not running" });
+  exec("pgrep -f 'bot.py'", (pgrepErr, stdout) => {
+    const pids = stdout.trim().split("\n").filter(Boolean);
+    if (pgrepErr || pids.length === 0) {
+      return res.json({ ok: true, message: "Bot was not running" });
     }
-    try { fs.unlinkSync(BOT_PID_FILE); } catch {}
-    res.json({ ok: true, message: "Bot stopped" });
+    exec(`kill -TERM ${pids.join(" ")}`, () => {
+      try { fs.unlinkSync(BOT_PID_FILE); } catch {}
+      res.json({ ok: true, message: "Bot stopped" });
+    });
   });
 });
 
 router.post("/bot/start", (req, res) => {
   const mode = req.body?.mode === "paper" ? "--paper" : "--live";
 
-  exec("pgrep -f 'python3 bot.py'", (err, stdout) => {
-    if (!err && stdout.trim().length > 0) {
+  exec("pgrep -f 'bot.py'", (pgrepErr, stdout) => {
+    const pids = stdout.trim().split("\n").filter(Boolean);
+    if (!pgrepErr && pids.length > 0) {
       return res.status(409).json({ ok: false, message: "Bot is already running" });
     }
 

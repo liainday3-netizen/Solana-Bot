@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useGetBotStatus, useGetBotSummary, useGetBotTrades, getGetBotStatusQueryKey, getGetBotSummaryQueryKey, getGetBotTradesQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 import { Activity, ArrowDownRight, ArrowUpRight, Clock, Coins, Crosshair, DollarSign, TrendingUp, Wallet, Zap, Link2, Play, Square } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +25,7 @@ export default function Dashboard() {
   const { data: summary, isLoading: summaryLoading } = useGetBotSummary({ query: { refetchInterval: 5000, queryKey: getGetBotSummaryQueryKey() } });
   const { data: trades, isLoading: tradesLoading } = useGetBotTrades({ query: { refetchInterval: 5000, queryKey: getGetBotTradesQueryKey() } });
 
+  const { toast } = useToast();
   const [blink, setBlink] = useState(false);
   const [controlling, setControlling] = useState(false);
   const [selectedMode, setSelectedMode] = useState<"live" | "paper">("live");
@@ -40,18 +42,30 @@ export default function Dashboard() {
     }
   }, [status?.mode]);
 
+  const invalidateStatus = (delay = 2000) => {
+    setTimeout(() => {
+      queryClient.invalidateQueries({ queryKey: getGetBotStatusQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetBotSummaryQueryKey() });
+    }, delay);
+  };
+
   const handleStart = async () => {
     setControlling(true);
     try {
-      await fetch("/api/bot/start", {
+      const res = await fetch("/api/bot/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: selectedMode }),
       });
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: getGetBotStatusQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getGetBotSummaryQueryKey() });
-      }, 2000);
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        toast({ title: "Bot started", description: `Running in ${selectedMode.toUpperCase()} mode` });
+        invalidateStatus(2000);
+      } else {
+        toast({ title: "Could not start bot", description: data.message || "Unknown error", variant: "destructive" });
+      }
+    } catch (e) {
+      toast({ title: "Request failed", description: "Could not reach the API. Check server logs.", variant: "destructive" });
     } finally {
       setControlling(false);
     }
@@ -60,11 +74,16 @@ export default function Dashboard() {
   const handleStop = async () => {
     setControlling(true);
     try {
-      await fetch("/api/bot/stop", { method: "POST" });
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: getGetBotStatusQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getGetBotSummaryQueryKey() });
-      }, 1500);
+      const res = await fetch("/api/bot/stop", { method: "POST" });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        toast({ title: "Bot stopped", description: data.message });
+        invalidateStatus(1500);
+      } else {
+        toast({ title: "Could not stop bot", description: data.message || "Unknown error", variant: "destructive" });
+      }
+    } catch (e) {
+      toast({ title: "Request failed", description: "Could not reach the API. Check server logs.", variant: "destructive" });
     } finally {
       setControlling(false);
     }
