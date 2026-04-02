@@ -111,6 +111,8 @@ components:
       properties:
         usdc:
           type: number
+        sol:
+          type: number
         holdings:
           type: object
           additionalProperties:

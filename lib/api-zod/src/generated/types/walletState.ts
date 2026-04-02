@@ -9,6 +9,7 @@ import type { WalletStateHoldings } from "./walletStateHoldings";
 
 export interface WalletState {
   usdc?: number;
+  sol?: number;
   holdings?: WalletStateHoldings;
   total_value_usdc?: number;
 }

@@ -1,15 +1,16 @@
 {
   "running": true,
   "mode": "live",
-  "cycle": 50,
-  "timestamp": "2026-04-02T01:51:41.483259Z",
+  "cycle": 5,
+  "timestamp": "2026-04-02T02:10:39.920737Z",
   "prices": {
-    "SOL": 79.22,
-    "JUP": 0.15396,
-    "BONK": 5.76e-06
+    "SOL": 79.19,
+    "JUP": 0.153934,
+    "BONK": 5.77e-06
   },
   "wallet": {
     "usdc": 20.822645,
+    "sol": 0.248353,
     "holdings": {},
     "total_value_usdc": 20.822645
   },
@@ -17,10 +18,10 @@
   "pnl_usd": 0.0,
   "pnl_pct": 0.0,
   "total_trades": 0,
-  "runtime_seconds": 509.5,
+  "runtime_seconds": 42.0,
   "trends": {
-    "SOL": -0.0126,
-    "JUP": 0.0091,
+    "SOL": 0.0,
+    "JUP": 0.0,
     "BONK": 0.0
   }
 }

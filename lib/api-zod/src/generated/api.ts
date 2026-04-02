@@ -28,6 +28,7 @@ export const GetBotStatusResponse = zod.object({
   wallet: zod
     .object({
       usdc: zod.number().optional(),
+      sol: zod.number().optional(),
       holdings: zod.record(zod.string(), zod.number()).optional(),
       total_value_usdc: zod.number().optional(),
     })

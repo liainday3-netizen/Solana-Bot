@@ -253,6 +253,7 @@ def save_bot_state(
     mode: str,
     prices: dict,
     wallet_usdc: float,
+    wallet_sol: float = 0.0,
     holdings: dict,
     total_value: float,
     starting_value: float,
@@ -271,6 +272,7 @@ def save_bot_state(
         "prices":         prices,
         "wallet": {
             "usdc":             round(wallet_usdc, 6),
+            "sol":              round(wallet_sol, 6),
             "holdings":         {k: round(v, 6) for k, v in holdings.items()},
             "total_value_usdc": round(total_value, 6),
         },
@@ -634,9 +636,12 @@ def run_bot(paper_mode: bool):
 
     # Initial balance fetch for banner (live mode only)
     live_usdc_balance: float = 0.0
+    live_sol_balance: float = 0.0
     if not paper_mode and public_key:
         fetched = get_live_usdc_balance(public_key)
         live_usdc_balance = fetched if fetched is not None else 0.0
+        fetched_sol = get_live_token_balance(public_key, "SOL")
+        live_sol_balance = fetched_sol if fetched_sol is not None else 0.0
 
     wallet  = PaperWallet() if paper_mode else None
     history = PriceHistory(window=6)
@@ -699,6 +704,8 @@ def run_bot(paper_mode: bool):
                 fetched = get_live_usdc_balance(public_key)
                 if fetched is not None:
                     live_usdc_balance = fetched
+                fetched_sol = get_live_token_balance(public_key, "SOL")
+                live_sol_balance = fetched_sol if fetched_sol is not None else live_sol_balance
 
                 if live_usdc_balance < CIRCUIT_BREAKER_USD:
                     any_holdings = any(
@@ -797,10 +804,12 @@ def run_bot(paper_mode: bool):
             # ── 4. Persist state for dashboard ───────────────────────────────
             if paper_mode and wallet:
                 _wallet_usdc  = wallet.usdc
+                _wallet_sol   = 0.0
                 _holdings     = dict(wallet.holdings)
                 _total_value  = wallet.total_value_usdc(prices)
             else:
                 _wallet_usdc  = live_usdc_balance
+                _wallet_sol   = live_sol_balance
                 _holdings     = {}
                 _total_value  = live_usdc_balance
 
@@ -810,6 +819,7 @@ def run_bot(paper_mode: bool):
                 mode=label.lower(),
                 prices=prices,
                 wallet_usdc=_wallet_usdc,
+                wallet_sol=_wallet_sol,
                 holdings=_holdings,
                 total_value=_total_value,
                 starting_value=starting_value,

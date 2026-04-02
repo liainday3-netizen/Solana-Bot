@@ -24,6 +24,7 @@ export type WalletStateHoldings = { [key: string]: number };
 
 export interface WalletState {
   usdc?: number;
+  sol?: number;
   holdings?: WalletStateHoldings;
   total_value_usdc?: number;
 }

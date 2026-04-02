@@ -242,6 +242,22 @@ export default function Dashboard() {
                   <span className="font-display text-lg tracking-wider text-primary">USDC</span>
                   <span className="font-display text-xl">{formatCurrency(status?.wallet?.usdc)}</span>
                 </div>
+
+                {(status?.wallet?.sol !== undefined && status.wallet.sol > 0) && (
+                  <div className="flex justify-between items-center p-3 border border-border/30 hover:border-primary/30 transition-colors">
+                    <span className="font-display text-lg tracking-wider text-foreground">SOL</span>
+                    <div className="text-right">
+                      <div className="font-display text-lg text-muted-foreground">
+                        {new Intl.NumberFormat('en-US', { maximumFractionDigits: 6 }).format(status.wallet.sol)} SOL
+                      </div>
+                      {status?.prices?.SOL && (
+                        <div className="font-display text-sm text-primary">
+                          ≈ {formatCurrency(status.wallet.sol * status.prices.SOL)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
                 
                 {status?.wallet?.holdings && Object.entries(status.wallet.holdings).map(([token, amount]) => (
                   <div key={token} className="flex justify-between items-center p-3 border border-border/30 hover:border-primary/30 transition-colors">
