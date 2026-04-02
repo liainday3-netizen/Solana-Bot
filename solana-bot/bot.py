@@ -845,7 +845,6 @@ def run_bot(paper_mode: bool):
         print("=" * 72)
         print(f"  Mode          : {label}")
         print(f"  Runtime       : {minutes}m {seconds}s  ({cycle} cycles)")
-        print(f"  P&L           : {pnl_sign}${pnl:.4f}  ({pnl_sign}{pnl_pct:.2f}%)")
         print(f"  Trades this session : {total_trades_done}")
         print(f"  All trades logged   : {len(all_trades)}  ({TRADE_LOG_FILE})")
         print("=" * 72)
