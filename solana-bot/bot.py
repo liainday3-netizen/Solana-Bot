@@ -762,8 +762,6 @@ def run_bot(paper_mode: bool):
                         received = wallet.sell(token, holdings, current_price)
                         trade_entry.update(tokens_sold=round(holdings, 6),
                                            usdc_received=round(received, 6))
-                        log.info("  [PAPER] SELL %.6f %s  recv $%.4f  @ $%.6f",
-                                 holdings, token, received, current_price)
                     save_trade(trade_entry)
 
                 # ── Live execution ───────────────────────────────────────────
