@@ -4,8 +4,9 @@ import path from "path";
 
 const router = Router();
 
-const BOT_STATE_FILE = path.join(process.cwd(), "solana-bot/bot_state.json");
-const TRADES_FILE = path.join(process.cwd(), "solana-bot/trades.json");
+const WORKSPACE_ROOT = path.resolve(process.cwd(), "../..");
+const BOT_STATE_FILE = path.join(WORKSPACE_ROOT, "solana-bot/bot_state.json");
+const TRADES_FILE = path.join(WORKSPACE_ROOT, "solana-bot/trades.json");
 
 function readJson(filePath: string): unknown {
   try {
