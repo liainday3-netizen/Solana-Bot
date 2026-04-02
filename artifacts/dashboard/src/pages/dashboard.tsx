@@ -156,11 +156,9 @@ export default function Dashboard() {
               </span>
             </div>
 
-            {status?.mode && (
-              <Badge variant="outline" className={`font-display text-sm tracking-widest px-3 py-1 ${status.mode === 'live' ? 'border-destructive text-destructive glow-text-red' : 'border-primary text-primary glow-text'}`}>
-                {status.mode.toUpperCase()} MODE
-              </Badge>
-            )}
+            <Badge variant="outline" className={`font-display text-sm tracking-widest px-3 py-1 ${selectedMode === 'live' ? 'border-destructive text-destructive glow-text-red' : 'border-primary text-primary glow-text'}`}>
+              {selectedMode.toUpperCase()} MODE
+            </Badge>
           </div>
         </header>
 
