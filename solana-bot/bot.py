@@ -82,8 +82,16 @@ TOKENS = {
 }
 TOKEN_DECIMALS = {"USDC": 6, "SOL": 9, "BONK": 5, "JUP": 6, "WIF": 6}
 
-JUPITER_QUOTE_URL = "https://quote-api.jup.ag/v6/quote"
-JUPITER_SWAP_URL  = "https://quote-api.jup.ag/v6/swap"
+JUPITER_QUOTE_URL  = "https://quote-api.jup.ag/v6/quote"
+JUPITER_SWAP_URL   = "https://quote-api.jup.ag/v6/swap"
+COINGECKO_PRICE_URL = "https://api.coingecko.com/api/v3/simple/price"
+
+# CoinGecko coin IDs for fallback pricing (when Jupiter API is unreachable)
+COINGECKO_IDS = {
+    "SOL":  "solana",
+    "JUP":  "jupiter-exchange-solana",
+    "BONK": "bonk",
+}
 
 TRADE_LOG_FILE = Path("trades.json")
 FOCUS_TOKENS   = ["SOL", "JUP", "BONK"]
@@ -333,7 +341,33 @@ def raw_to_human(raw_amount: int, token: str) -> float:
     return raw_amount / 10 ** TOKEN_DECIMALS[token]
 
 
+def get_prices_coingecko(symbols: list[str]) -> dict[str, float]:
+    """Batch-fetch USD prices from CoinGecko for the given token symbols.
+    Returns a dict of {symbol: price_usd}. Used as a fallback when Jupiter is unreachable."""
+    ids = [COINGECKO_IDS[s] for s in symbols if s in COINGECKO_IDS]
+    if not ids:
+        return {}
+    try:
+        resp = requests.get(
+            COINGECKO_PRICE_URL,
+            params={"ids": ",".join(ids), "vs_currencies": "usd"},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        result: dict[str, float] = {}
+        for sym in symbols:
+            cg_id = COINGECKO_IDS.get(sym)
+            if cg_id and cg_id in data:
+                result[sym] = float(data[cg_id]["usd"])
+        return result
+    except Exception as exc:
+        log.warning("CoinGecko price error: %s", exc)
+        return {}
+
+
 def get_token_price_in_usdc(token_symbol: str) -> float | None:
+    """Fetch price via Jupiter Quote API. Returns None on failure (caller handles fallback)."""
     if token_symbol == "USDC":
         return 1.0
     quote = get_quote(
@@ -344,7 +378,7 @@ def get_token_price_in_usdc(token_symbol: str) -> float | None:
     if not quote:
         return None
     out_raw = int(quote.get("outAmount", 0))
-    if out_raw == 0:
+    if not out_raw:
         return None
     per_usdc = raw_to_human(out_raw, token_symbol)
     return (1.0 / per_usdc) if per_usdc else None
@@ -562,14 +596,28 @@ def run_bot(paper_mode: bool):
 
             # ── 1. Prices ────────────────────────────────────────────────────
             prices: dict[str, float] = {}
+
+            # Try Jupiter first for all tokens
             for token in FOCUS_TOKENS:
                 price = get_token_price_in_usdc(token)
                 if price is not None:
                     prices[token] = price
-                    history.update(token, price)
-                    log.info("  %s  $%.6f", token, price)
+
+            # Batch CoinGecko fallback for any tokens Jupiter couldn't serve
+            missing = [t for t in FOCUS_TOKENS if t not in prices]
+            if missing:
+                cg_prices = get_prices_coingecko(missing)
+                for token, price in cg_prices.items():
+                    prices[token] = price
+                if cg_prices:
+                    log.info("  [CoinGecko fallback] fetched %d price(s)", len(cg_prices))
+
+            for token in FOCUS_TOKENS:
+                if token in prices:
+                    history.update(token, prices[token])
+                    log.info("  %s  $%.6f", token, prices[token])
                 else:
-                    log.warning("  %s  — price unavailable", token)
+                    log.warning("  %s  — price unavailable (Jupiter + CoinGecko both failed)", token)
 
             # ── 2. Wallet state ──────────────────────────────────────────────
             if paper_mode and wallet:
