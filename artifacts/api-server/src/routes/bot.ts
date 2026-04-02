@@ -84,11 +84,14 @@ router.post("/bot/stop", (_req, res) => {
   exec("pgrep -f 'bot.py'", (pgrepErr, stdout) => {
     const pids = stdout.trim().split("\n").filter(Boolean);
     if (pgrepErr || pids.length === 0) {
+      try { fs.unlinkSync(BOT_PID_FILE); } catch {}
       return res.json({ ok: true, message: "Bot was not running" });
     }
-    exec(`kill -TERM ${pids.join(" ")}`, () => {
+    exec(`kill -9 ${pids.join(" ")}`, () => {
       try { fs.unlinkSync(BOT_PID_FILE); } catch {}
-      res.json({ ok: true, message: "Bot stopped" });
+      setTimeout(() => {
+        res.json({ ok: true, message: "Bot stopped" });
+      }, 1000);
     });
   });
 });
