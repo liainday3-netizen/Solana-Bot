@@ -36,12 +36,6 @@ export default function Dashboard() {
     return () => clearTimeout(t);
   }, [status?.cycle]);
 
-  useEffect(() => {
-    if (status?.mode) {
-      setSelectedMode(status.mode as "live" | "paper");
-    }
-  }, [status?.mode]);
-
   const invalidateStatus = (delay = 2000) => {
     setTimeout(() => {
       queryClient.invalidateQueries({ queryKey: getGetBotStatusQueryKey() });
