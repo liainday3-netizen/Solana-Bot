@@ -28,7 +28,6 @@ export default function Dashboard() {
   const { toast } = useToast();
   const [blink, setBlink] = useState(false);
   const [controlling, setControlling] = useState(false);
-  const [selectedMode, setSelectedMode] = useState<"live" | "paper">("live");
 
   useEffect(() => {
     setBlink(true);
@@ -49,11 +48,11 @@ export default function Dashboard() {
       const res = await fetch("/api/bot/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: selectedMode }),
+        body: JSON.stringify({ mode: "live" }),
       });
       const data = await res.json();
       if (res.ok && data.ok) {
-        toast({ title: "Bot started", description: `Running in ${selectedMode.toUpperCase()} mode` });
+        toast({ title: "Bot started", description: "Running in LIVE mode" });
         invalidateStatus(2000);
       } else {
         toast({ title: "Could not start bot", description: data.message || "Unknown error", variant: "destructive" });
@@ -101,32 +100,6 @@ export default function Dashboard() {
           </div>
           
           <div className="flex items-center gap-3 flex-wrap">
-            {/* Mode Toggle */}
-            <div className="flex items-center border border-primary/30 overflow-hidden">
-              <button
-                onClick={() => setSelectedMode("paper")}
-                disabled={isRunning || controlling}
-                className={`px-3 py-2 font-display text-xs tracking-widest uppercase transition-colors disabled:opacity-40 ${
-                  selectedMode === "paper"
-                    ? "bg-primary text-background"
-                    : "bg-transparent text-muted-foreground hover:text-primary"
-                }`}
-              >
-                Paper
-              </button>
-              <button
-                onClick={() => setSelectedMode("live")}
-                disabled={isRunning || controlling}
-                className={`px-3 py-2 font-display text-xs tracking-widest uppercase transition-colors disabled:opacity-40 ${
-                  selectedMode === "live"
-                    ? "bg-destructive text-white"
-                    : "bg-transparent text-muted-foreground hover:text-destructive"
-                }`}
-              >
-                Live
-              </button>
-            </div>
-
             {/* Start / Stop Button */}
             {isRunning ? (
               <button
@@ -156,8 +129,8 @@ export default function Dashboard() {
               </span>
             </div>
 
-            <Badge variant="outline" className={`font-display text-sm tracking-widest px-3 py-1 ${selectedMode === 'live' ? 'border-destructive text-destructive glow-text-red' : 'border-primary text-primary glow-text'}`}>
-              {selectedMode.toUpperCase()} MODE
+            <Badge variant="outline" className="font-display text-sm tracking-widest px-3 py-1 border-destructive text-destructive glow-text-red">
+              LIVE MODE
             </Badge>
           </div>
         </header>

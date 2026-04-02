@@ -104,8 +104,8 @@ router.post("/bot/stop", async (_req, res) => {
   }, 1500);
 });
 
-router.post("/bot/start", (req, res) => {
-  const mode = req.body?.mode === "paper" ? "--paper" : "--live";
+router.post("/bot/start", (_req, res) => {
+  const mode = "--live";
 
   exec("pgrep -f 'bot.py'", (pgrepErr, stdout) => {
     const pids = stdout.trim().split("\n").filter(Boolean);
