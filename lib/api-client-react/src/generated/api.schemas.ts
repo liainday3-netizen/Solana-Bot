@@ -8,3 +8,74 @@
 export interface HealthStatus {
   status: string;
 }
+
+export type BotStatusMode = (typeof BotStatusMode)[keyof typeof BotStatusMode];
+
+export const BotStatusMode = {
+  paper: "paper",
+  live: "live",
+} as const;
+
+export type BotStatusPrices = { [key: string]: number };
+
+export type BotStatusTrends = { [key: string]: number };
+
+export type WalletStateHoldings = { [key: string]: number };
+
+export interface WalletState {
+  usdc?: number;
+  holdings?: WalletStateHoldings;
+  total_value_usdc?: number;
+}
+
+export interface BotStatus {
+  running: boolean;
+  mode: BotStatusMode;
+  cycle: number;
+  timestamp: string;
+  prices?: BotStatusPrices;
+  wallet?: WalletState;
+  starting_value?: number;
+  pnl_usd?: number;
+  pnl_pct?: number;
+  total_trades?: number;
+  trends?: BotStatusTrends;
+}
+
+export type TradeAction = (typeof TradeAction)[keyof typeof TradeAction];
+
+export const TradeAction = {
+  BUY: "BUY",
+  SELL: "SELL",
+} as const;
+
+export interface Trade {
+  timestamp: string;
+  cycle?: number;
+  mode?: string;
+  token: string;
+  action: TradeAction;
+  price_usdc?: number;
+  trend_pct?: number;
+  reason?: string;
+  usdc_spent?: number;
+  tokens_bought?: number;
+  tokens_sold?: number;
+  usdc_received?: number;
+  tx_signature?: string;
+  error?: string;
+}
+
+export interface BotSummary {
+  total_trades: number;
+  runtime_seconds: number;
+  cycles: number;
+  starting_value?: number;
+  current_value?: number;
+  pnl_usd?: number;
+  pnl_pct?: number;
+  mode?: string;
+  buy_count?: number;
+  sell_count?: number;
+  last_trade_at?: string;
+}

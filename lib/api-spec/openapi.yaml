@@ -1,6 +1,5 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
   description: API specification
@@ -10,6 +9,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: bot
+    description: Solana trading bot data
 paths:
   /healthz:
     get:
@@ -24,13 +25,156 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /bot/status:
+    get:
+      operationId: getBotStatus
+      tags: [bot]
+      summary: Get current bot status
+      description: Returns current prices, wallet, cycle info, and P&L
+      responses:
+        "200":
+          description: Current bot status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotStatus"
+  /bot/trades:
+    get:
+      operationId: getBotTrades
+      tags: [bot]
+      summary: Get trade history
+      description: Returns list of all trades logged
+      responses:
+        "200":
+          description: Trade history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Trade"
+  /bot/summary:
+    get:
+      operationId: getBotSummary
+      tags: [bot]
+      summary: Get session summary stats
+      description: Returns session stats like total trades, P&L, uptime
+      responses:
+        "200":
+          description: Session summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotSummary"
 components:
   schemas:
     HealthStatus:
       type: object
+      required: [status]
       properties:
         status:
           type: string
-      required:
-        - status
-
+    BotStatus:
+      type: object
+      required: [running, mode, cycle, timestamp]
+      properties:
+        running:
+          type: boolean
+        mode:
+          type: string
+          enum: [paper, live]
+        cycle:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+        prices:
+          type: object
+          additionalProperties:
+            type: number
+        wallet:
+          $ref: "#/components/schemas/WalletState"
+        starting_value:
+          type: number
+        pnl_usd:
+          type: number
+        pnl_pct:
+          type: number
+        total_trades:
+          type: integer
+        trends:
+          type: object
+          additionalProperties:
+            type: number
+    WalletState:
+      type: object
+      properties:
+        usdc:
+          type: number
+        holdings:
+          type: object
+          additionalProperties:
+            type: number
+        total_value_usdc:
+          type: number
+    Trade:
+      type: object
+      required: [timestamp, token, action]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        cycle:
+          type: integer
+        mode:
+          type: string
+        token:
+          type: string
+        action:
+          type: string
+          enum: [BUY, SELL]
+        price_usdc:
+          type: number
+        trend_pct:
+          type: number
+        reason:
+          type: string
+        usdc_spent:
+          type: number
+        tokens_bought:
+          type: number
+        tokens_sold:
+          type: number
+        usdc_received:
+          type: number
+        tx_signature:
+          type: string
+        error:
+          type: string
+    BotSummary:
+      type: object
+      required: [total_trades, runtime_seconds, cycles]
+      properties:
+        total_trades:
+          type: integer
+        runtime_seconds:
+          type: number
+        cycles:
+          type: integer
+        starting_value:
+          type: number
+        current_value:
+          type: number
+        pnl_usd:
+          type: number
+        pnl_pct:
+          type: number
+        mode:
+          type: string
+        buy_count:
+          type: integer
+        sell_count:
+          type: integer
+        last_trade_at:
+          type: string
+          format: date-time

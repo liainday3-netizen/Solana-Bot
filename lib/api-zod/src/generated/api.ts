@@ -14,3 +14,67 @@ import * as zod from "zod";
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
+
+/**
+ * Returns current prices, wallet, cycle info, and P&L
+ * @summary Get current bot status
+ */
+export const GetBotStatusResponse = zod.object({
+  running: zod.boolean(),
+  mode: zod.enum(["paper", "live"]),
+  cycle: zod.number(),
+  timestamp: zod.coerce.date(),
+  prices: zod.record(zod.string(), zod.number()).optional(),
+  wallet: zod
+    .object({
+      usdc: zod.number().optional(),
+      holdings: zod.record(zod.string(), zod.number()).optional(),
+      total_value_usdc: zod.number().optional(),
+    })
+    .optional(),
+  starting_value: zod.number().optional(),
+  pnl_usd: zod.number().optional(),
+  pnl_pct: zod.number().optional(),
+  total_trades: zod.number().optional(),
+  trends: zod.record(zod.string(), zod.number()).optional(),
+});
+
+/**
+ * Returns list of all trades logged
+ * @summary Get trade history
+ */
+export const GetBotTradesResponseItem = zod.object({
+  timestamp: zod.coerce.date(),
+  cycle: zod.number().optional(),
+  mode: zod.string().optional(),
+  token: zod.string(),
+  action: zod.enum(["BUY", "SELL"]),
+  price_usdc: zod.number().optional(),
+  trend_pct: zod.number().optional(),
+  reason: zod.string().optional(),
+  usdc_spent: zod.number().optional(),
+  tokens_bought: zod.number().optional(),
+  tokens_sold: zod.number().optional(),
+  usdc_received: zod.number().optional(),
+  tx_signature: zod.string().optional(),
+  error: zod.string().optional(),
+});
+export const GetBotTradesResponse = zod.array(GetBotTradesResponseItem);
+
+/**
+ * Returns session stats like total trades, P&L, uptime
+ * @summary Get session summary stats
+ */
+export const GetBotSummaryResponse = zod.object({
+  total_trades: zod.number(),
+  runtime_seconds: zod.number(),
+  cycles: zod.number(),
+  starting_value: zod.number().optional(),
+  current_value: zod.number().optional(),
+  pnl_usd: zod.number().optional(),
+  pnl_pct: zod.number().optional(),
+  mode: zod.string().optional(),
+  buy_count: zod.number().optional(),
+  sell_count: zod.number().optional(),
+  last_trade_at: zod.coerce.date().optional(),
+});

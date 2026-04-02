@@ -13,7 +13,7 @@ import type {
   UseQueryResult,
 } from "@tanstack/react-query";
 
-import type { HealthStatus } from "./api.schemas";
+import type { BotStatus, BotSummary, HealthStatus, Trade } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
 import type { ErrorType } from "../custom-fetch";
@@ -92,6 +92,232 @@ export function useHealthCheck<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getHealthCheckQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns current prices, wallet, cycle info, and P&L
+ * @summary Get current bot status
+ */
+export const getGetBotStatusUrl = () => {
+  return `/api/bot/status`;
+};
+
+export const getBotStatus = async (
+  options?: RequestInit,
+): Promise<BotStatus> => {
+  return customFetch<BotStatus>(getGetBotStatusUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetBotStatusQueryKey = () => {
+  return [`/api/bot/status`] as const;
+};
+
+export const getGetBotStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getBotStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getBotStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetBotStatusQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getBotStatus>>> = ({
+    signal,
+  }) => getBotStatus({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getBotStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetBotStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getBotStatus>>
+>;
+export type GetBotStatusQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get current bot status
+ */
+
+export function useGetBotStatus<
+  TData = Awaited<ReturnType<typeof getBotStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getBotStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetBotStatusQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns list of all trades logged
+ * @summary Get trade history
+ */
+export const getGetBotTradesUrl = () => {
+  return `/api/bot/trades`;
+};
+
+export const getBotTrades = async (options?: RequestInit): Promise<Trade[]> => {
+  return customFetch<Trade[]>(getGetBotTradesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetBotTradesQueryKey = () => {
+  return [`/api/bot/trades`] as const;
+};
+
+export const getGetBotTradesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getBotTrades>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getBotTrades>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetBotTradesQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getBotTrades>>> = ({
+    signal,
+  }) => getBotTrades({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getBotTrades>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetBotTradesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getBotTrades>>
+>;
+export type GetBotTradesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get trade history
+ */
+
+export function useGetBotTrades<
+  TData = Awaited<ReturnType<typeof getBotTrades>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getBotTrades>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetBotTradesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns session stats like total trades, P&L, uptime
+ * @summary Get session summary stats
+ */
+export const getGetBotSummaryUrl = () => {
+  return `/api/bot/summary`;
+};
+
+export const getBotSummary = async (
+  options?: RequestInit,
+): Promise<BotSummary> => {
+  return customFetch<BotSummary>(getGetBotSummaryUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetBotSummaryQueryKey = () => {
+  return [`/api/bot/summary`] as const;
+};
+
+export const getGetBotSummaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getBotSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getBotSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetBotSummaryQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getBotSummary>>> = ({
+    signal,
+  }) => getBotSummary({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getBotSummary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetBotSummaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getBotSummary>>
+>;
+export type GetBotSummaryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get session summary stats
+ */
+
+export function useGetBotSummary<
+  TData = Awaited<ReturnType<typeof getBotSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getBotSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetBotSummaryQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

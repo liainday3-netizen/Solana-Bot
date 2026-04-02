@@ -94,6 +94,7 @@ COINGECKO_IDS = {
 }
 
 TRADE_LOG_FILE = Path("trades.json")
+BOT_STATE_FILE = Path("bot_state.json")
 FOCUS_TOKENS   = ["SOL", "JUP", "BONK"]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -244,6 +245,46 @@ def save_trade(entry: dict):
     trades = load_trade_log()
     trades.append(entry)
     TRADE_LOG_FILE.write_text(json.dumps(trades, indent=2))
+
+
+def save_bot_state(
+    *,
+    cycle: int,
+    mode: str,
+    prices: dict,
+    wallet_usdc: float,
+    holdings: dict,
+    total_value: float,
+    starting_value: float,
+    total_trades: int,
+    start_time: "datetime.datetime",
+    trends: dict,
+):
+    pnl = total_value - starting_value
+    pnl_pct = (pnl / starting_value * 100) if starting_value > 0 else 0
+    elapsed = (datetime.datetime.utcnow() - start_time).total_seconds()
+    state = {
+        "running":        True,
+        "mode":           mode,
+        "cycle":          cycle,
+        "timestamp":      datetime.datetime.utcnow().isoformat() + "Z",
+        "prices":         prices,
+        "wallet": {
+            "usdc":             round(wallet_usdc, 6),
+            "holdings":         {k: round(v, 6) for k, v in holdings.items()},
+            "total_value_usdc": round(total_value, 6),
+        },
+        "starting_value": round(starting_value, 6),
+        "pnl_usd":        round(pnl, 6),
+        "pnl_pct":        round(pnl_pct, 4),
+        "total_trades":   total_trades,
+        "runtime_seconds": round(elapsed, 1),
+        "trends":         {k: round(v * 100, 4) for k, v in trends.items() if v is not None},
+    }
+    try:
+        BOT_STATE_FILE.write_text(json.dumps(state, indent=2))
+    except Exception:
+        pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -763,6 +804,30 @@ def run_bot(paper_mode: bool):
                     else:
                         log.error("  [LIVE] ❌ %s %s FAILED — no signature", action, token)
                     save_trade(trade_entry)
+
+            # ── 4. Persist state for dashboard ───────────────────────────────
+            if paper_mode and wallet:
+                _wallet_usdc  = wallet.usdc
+                _holdings     = dict(wallet.holdings)
+                _total_value  = wallet.total_value_usdc(prices)
+            else:
+                _wallet_usdc  = live_usdc_balance
+                _holdings     = {}
+                _total_value  = live_usdc_balance
+
+            _trends = {t: history.trend(t) for t in FOCUS_TOKENS}
+            save_bot_state(
+                cycle=cycle,
+                mode=label.lower(),
+                prices=prices,
+                wallet_usdc=_wallet_usdc,
+                holdings=_holdings,
+                total_value=_total_value,
+                starting_value=starting_value,
+                total_trades=total_trades_done,
+                start_time=start_time,
+                trends={k: v for k, v in _trends.items() if v is not None},
+            )
 
             log.info("  Sleeping %ds...\n", LOOP_INTERVAL_SECONDS)
             time.sleep(LOOP_INTERVAL_SECONDS)

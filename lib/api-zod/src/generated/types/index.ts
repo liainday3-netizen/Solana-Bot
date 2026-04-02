@@ -6,4 +6,13 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./botStatus";
+export * from "./botStatusMode";
+export * from "./botStatusPrices";
+export * from "./botStatusTrends";
+export * from "./botSummary";
 export * from "./healthStatus";
+export * from "./trade";
+export * from "./tradeAction";
+export * from "./walletState";
+export * from "./walletStateHoldings";
