@@ -341,9 +341,21 @@ def raw_to_human(raw_amount: int, token: str) -> float:
     return raw_amount / 10 ** TOKEN_DECIMALS[token]
 
 
+# Cache so we don't hammer CoinGecko every 10s (free tier: ~30 req/min)
+_cg_cache: dict[str, float] = {}
+_cg_cache_ts: float = 0.0
+_CG_CACHE_TTL = 60.0  # seconds
+
+
 def get_prices_coingecko(symbols: list[str]) -> dict[str, float]:
-    """Batch-fetch USD prices from CoinGecko for the given token symbols.
-    Returns a dict of {symbol: price_usd}. Used as a fallback when Jupiter is unreachable."""
+    """Batch-fetch USD prices from CoinGecko, cached for 60 s to respect free-tier limits."""
+    global _cg_cache, _cg_cache_ts
+
+    now = time.monotonic()
+    # Return cached result if it's fresh and covers all requested symbols
+    if _cg_cache and (now - _cg_cache_ts) < _CG_CACHE_TTL and all(s in _cg_cache for s in symbols):
+        return {s: _cg_cache[s] for s in symbols}
+
     ids = [COINGECKO_IDS[s] for s in symbols if s in COINGECKO_IDS]
     if not ids:
         return {}
@@ -360,9 +372,16 @@ def get_prices_coingecko(symbols: list[str]) -> dict[str, float]:
             cg_id = COINGECKO_IDS.get(sym)
             if cg_id and cg_id in data:
                 result[sym] = float(data[cg_id]["usd"])
+        # Update cache
+        _cg_cache.update(result)
+        _cg_cache_ts = now
         return result
     except Exception as exc:
         log.warning("CoinGecko price error: %s", exc)
+        # Return stale cache rather than nothing, if available
+        if _cg_cache:
+            log.info("  Using stale CoinGecko cache (age %.0fs)", now - _cg_cache_ts)
+            return {s: _cg_cache[s] for s in symbols if s in _cg_cache}
         return {}
 
 
