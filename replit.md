@@ -19,18 +19,41 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 ## Solana Trading Bot
 
 A standalone Python trading bot in `solana-bot/`:
+
 - **Language**: Python 3.11
-- **Mode**: Paper trading (virtual $20 USDC) by default — no real money at risk
-- **Strategy**: Simple momentum via Jupiter Quote API prices (SOL, JUP, BONK)
-- **Safety**: 50% max risk per trade, circuit breaker at $5, 0.5% min threshold
-- **Files**: `bot.py` (main), `.env.example` (copy → .env), `trades.json` (auto-created log)
-- **Run**: Use the "Solana Trading Bot" workflow, or `cd solana-bot && python3 bot.py`
+- **Mode**: Paper trading (virtual $20 USDC) by default — no real money at risk until `.env` keys are present
+- **Strategy**: Momentum — 6-cycle rolling window via Jupiter Quote API prices (SOL, JUP, BONK)
+- **Safety**: 50% max risk per trade, $5 circuit breaker, 0.5% min signal threshold
+- **Live trading**: Requires `WALLET_PUBLIC_KEY`, `PRIVATE_KEY`, and optionally `SOLANA_RPC_URL` as Replit Secrets
+- **Files**: `bot.py` (main), `bot.log` (rotating log), `trades.json` (auto-created trade log)
+- **Run**: "Solana Trading Bot" workflow (`cd solana-bot && python3 bot.py --live`)
 - **Dependencies**: requests, python-dotenv, base58, solana, solders
+- **Deployment**: VM target (always-running process); Jupiter API calls require outbound internet (works in deployed env, blocked in dev sandbox)
+
+### Required Secrets (for live mode)
+
+| Secret | Purpose |
+|---|---|
+| `WALLET_PUBLIC_KEY` | Solana wallet public key |
+| `PRIVATE_KEY` | Wallet private key (base58) — never share |
+| `SOLANA_RPC_URL` | RPC endpoint (defaults to public mainnet if absent) |
+
+### Session summary
+
+Printed on every exit (Ctrl+C or circuit breaker):
+- Mode, runtime, cycles run
+- Starting vs ending portfolio value
+- P&L in USD and %
+- Total trades this session + all-time trade count
 
 ## Structure
 
 ```text
 artifacts-monorepo/
+├── solana-bot/             # Solana trading bot (Python)
+│   ├── bot.py              # Main bot logic
+│   ├── bot.log             # Rotating log file
+│   └── trades.json         # Trade history (auto-created)
 ├── artifacts/              # Deployable applications
 │   └── api-server/         # Express API server
 ├── lib/                    # Shared libraries
@@ -39,20 +62,20 @@ artifacts-monorepo/
 │   ├── api-zod/            # Generated Zod schemas from OpenAPI
 │   └── db/                 # Drizzle ORM schema + DB connection
 ├── scripts/                # Utility scripts (single workspace package)
-│   └── src/                # Individual .ts scripts, run via `pnpm --filter @workspace/scripts run <script>`
-├── pnpm-workspace.yaml     # pnpm workspace (artifacts/*, lib/*, lib/integrations/*, scripts)
-├── tsconfig.base.json      # Shared TS options (composite, bundler resolution, es2022)
-├── tsconfig.json           # Root TS project references
-└── package.json            # Root package with hoisted devDeps
+│   └── src/                # Individual .ts scripts
+├── pnpm-workspace.yaml
+├── tsconfig.base.json
+├── tsconfig.json
+└── package.json
 ```
 
 ## TypeScript & Composite Projects
 
 Every package extends `tsconfig.base.json` which sets `composite: true`. The root `tsconfig.json` lists all packages as project references. This means:
 
-- **Always typecheck from the root** — run `pnpm run typecheck` (which runs `tsc --build --emitDeclarationOnly`). This builds the full dependency graph so that cross-package imports resolve correctly. Running `tsc` inside a single package will fail if its dependencies haven't been built yet.
-- **`emitDeclarationOnly`** — we only emit `.d.ts` files during typecheck; actual JS bundling is handled by esbuild/tsx/vite...etc, not `tsc`.
-- **Project references** — when package A depends on package B, A's `tsconfig.json` must list B in its `references` array. `tsc --build` uses this to determine build order and skip up-to-date packages.
+- **Always typecheck from the root** — run `pnpm run typecheck` (which runs `tsc --build --emitDeclarationOnly`).
+- **`emitDeclarationOnly`** — we only emit `.d.ts` files during typecheck; actual JS bundling is handled by esbuild/tsx/vite.
+- **Project references** — when package A depends on package B, A's `tsconfig.json` must list B in its `references` array.
 
 ## Root Scripts
 
@@ -67,41 +90,30 @@ Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` 
 
 - Entry: `src/index.ts` — reads `PORT`, starts Express
 - App setup: `src/app.ts` — mounts CORS, JSON/urlencoded parsing, routes at `/api`
-- Routes: `src/routes/index.ts` mounts sub-routers; `src/routes/health.ts` exposes `GET /health` (full path: `/api/health`)
+- Routes: `src/routes/index.ts` mounts sub-routers; `src/routes/health.ts` exposes `GET /health`
 - Depends on: `@workspace/db`, `@workspace/api-zod`
-- `pnpm --filter @workspace/api-server run dev` — run the dev server
-- `pnpm --filter @workspace/api-server run build` — production esbuild bundle (`dist/index.cjs`)
-- Build bundles an allowlist of deps (express, cors, pg, drizzle-orm, zod, etc.) and externalizes the rest
 
 ### `lib/db` (`@workspace/db`)
 
-Database layer using Drizzle ORM with PostgreSQL. Exports a Drizzle client instance and schema models.
+Database layer using Drizzle ORM with PostgreSQL.
 
 - `src/index.ts` — creates a `Pool` + Drizzle instance, exports schema
-- `src/schema/index.ts` — barrel re-export of all models
-- `src/schema/<modelname>.ts` — table definitions with `drizzle-zod` insert schemas (no models definitions exist right now)
-- `drizzle.config.ts` — Drizzle Kit config (requires `DATABASE_URL`, automatically provided by Replit)
-- Exports: `.` (pool, db, schema), `./schema` (schema only)
-
-Production migrations are handled by Replit when publishing. In development, we just use `pnpm --filter @workspace/db run push`, and we fallback to `pnpm --filter @workspace/db run push-force`.
+- `drizzle.config.ts` — Drizzle Kit config (requires `DATABASE_URL`)
 
 ### `lib/api-spec` (`@workspace/api-spec`)
 
-Owns the OpenAPI 3.1 spec (`openapi.yaml`) and the Orval config (`orval.config.ts`). Running codegen produces output into two sibling packages:
-
-1. `lib/api-client-react/src/generated/` — React Query hooks + fetch client
-2. `lib/api-zod/src/generated/` — Zod schemas
+Owns the OpenAPI 3.1 spec (`openapi.yaml`) and the Orval config. Running codegen produces output into two sibling packages.
 
 Run codegen: `pnpm --filter @workspace/api-spec run codegen`
 
 ### `lib/api-zod` (`@workspace/api-zod`)
 
-Generated Zod schemas from the OpenAPI spec (e.g. `HealthCheckResponse`). Used by `api-server` for response validation.
+Generated Zod schemas from the OpenAPI spec.
 
 ### `lib/api-client-react` (`@workspace/api-client-react`)
 
-Generated React Query hooks and fetch client from the OpenAPI spec (e.g. `useHealthCheck`, `healthCheck`).
+Generated React Query hooks and fetch client from the OpenAPI spec.
 
 ### `scripts` (`@workspace/scripts`)
 
-Utility scripts package. Each script is a `.ts` file in `src/` with a corresponding npm script in `package.json`. Run scripts via `pnpm --filter @workspace/scripts run <script>`. Scripts can import any workspace package (e.g., `@workspace/db`) by adding it as a dependency in `scripts/package.json`.
+Utility scripts package. Run via `pnpm --filter @workspace/scripts run <script>`.
