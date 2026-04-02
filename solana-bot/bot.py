@@ -699,11 +699,7 @@ def run_bot(paper_mode: bool):
                 fetched = get_live_usdc_balance(public_key)
                 if fetched is not None:
                     live_usdc_balance = fetched
-                log.info(
-                    "  Live wallet — USDC: $%.4f%s",
-                    live_usdc_balance,
-                    "  (stale — RPC error)" if fetched is None else "",
-                )
+
                 if live_usdc_balance < CIRCUIT_BREAKER_USD:
                     any_holdings = any(
                         (get_live_token_balance(public_key, t) or 0) > 0
