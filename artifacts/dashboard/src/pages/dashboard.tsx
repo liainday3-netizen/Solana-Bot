@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useGetBotStatus, useGetBotSummary, useGetBotTrades, getGetBotStatusQueryKey, getGetBotSummaryQueryKey, getGetBotTradesQueryKey } from "@workspace/api-client-react";
-import { Activity, ArrowDownRight, ArrowUpRight, Clock, Coins, Crosshair, DollarSign, TrendingUp, Wallet, Zap, Link2 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Activity, ArrowDownRight, ArrowUpRight, Clock, Coins, Crosshair, DollarSign, TrendingUp, Wallet, Zap, Link2, Play, Square } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -18,17 +19,58 @@ const formatPercent = (val: number | undefined) => {
 };
 
 export default function Dashboard() {
+  const queryClient = useQueryClient();
   const { data: status, isLoading: statusLoading } = useGetBotStatus({ query: { refetchInterval: 5000, queryKey: getGetBotStatusQueryKey() } });
   const { data: summary, isLoading: summaryLoading } = useGetBotSummary({ query: { refetchInterval: 5000, queryKey: getGetBotSummaryQueryKey() } });
   const { data: trades, isLoading: tradesLoading } = useGetBotTrades({ query: { refetchInterval: 5000, queryKey: getGetBotTradesQueryKey() } });
 
   const [blink, setBlink] = useState(false);
+  const [controlling, setControlling] = useState(false);
+  const [selectedMode, setSelectedMode] = useState<"live" | "paper">("live");
 
   useEffect(() => {
     setBlink(true);
     const t = setTimeout(() => setBlink(false), 200);
     return () => clearTimeout(t);
   }, [status?.cycle]);
+
+  useEffect(() => {
+    if (status?.mode) {
+      setSelectedMode(status.mode as "live" | "paper");
+    }
+  }, [status?.mode]);
+
+  const handleStart = async () => {
+    setControlling(true);
+    try {
+      await fetch("/api/bot/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: selectedMode }),
+      });
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: getGetBotStatusQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetBotSummaryQueryKey() });
+      }, 2000);
+    } finally {
+      setControlling(false);
+    }
+  };
+
+  const handleStop = async () => {
+    setControlling(true);
+    try {
+      await fetch("/api/bot/stop", { method: "POST" });
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: getGetBotStatusQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetBotSummaryQueryKey() });
+      }, 1500);
+    } finally {
+      setControlling(false);
+    }
+  };
+
+  const isRunning = status?.running ?? false;
 
   return (
     <div className="min-h-[100dvh] bg-background p-4 md:p-8 text-foreground selection:bg-primary/30">
@@ -45,13 +87,62 @@ export default function Dashboard() {
             </p>
           </div>
           
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Mode Toggle */}
+            <div className="flex items-center border border-primary/30 overflow-hidden">
+              <button
+                onClick={() => setSelectedMode("paper")}
+                disabled={isRunning || controlling}
+                className={`px-3 py-2 font-display text-xs tracking-widest uppercase transition-colors disabled:opacity-40 ${
+                  selectedMode === "paper"
+                    ? "bg-primary text-background"
+                    : "bg-transparent text-muted-foreground hover:text-primary"
+                }`}
+              >
+                Paper
+              </button>
+              <button
+                onClick={() => setSelectedMode("live")}
+                disabled={isRunning || controlling}
+                className={`px-3 py-2 font-display text-xs tracking-widest uppercase transition-colors disabled:opacity-40 ${
+                  selectedMode === "live"
+                    ? "bg-destructive text-white"
+                    : "bg-transparent text-muted-foreground hover:text-destructive"
+                }`}
+              >
+                Live
+              </button>
+            </div>
+
+            {/* Start / Stop Button */}
+            {isRunning ? (
+              <button
+                onClick={handleStop}
+                disabled={controlling}
+                className="flex items-center gap-2 px-4 py-2 border border-destructive text-destructive font-display text-sm tracking-widest uppercase hover:bg-destructive hover:text-white transition-colors disabled:opacity-50"
+              >
+                <Square className="w-4 h-4" />
+                {controlling ? "Stopping..." : "Stop Bot"}
+              </button>
+            ) : (
+              <button
+                onClick={handleStart}
+                disabled={controlling}
+                className="flex items-center gap-2 px-4 py-2 border border-[#39ff14] text-[#39ff14] font-display text-sm tracking-widest uppercase hover:bg-[#39ff14] hover:text-background transition-colors disabled:opacity-50"
+              >
+                <Play className="w-4 h-4" />
+                {controlling ? "Starting..." : "Start Bot"}
+              </button>
+            )}
+
+            {/* System Status */}
             <div className="flex items-center gap-2 bg-card border border-primary/30 px-4 py-2 glow-box">
-              <Activity className={`w-5 h-5 ${status?.running ? "text-primary animate-pulse" : "text-muted-foreground"}`} />
+              <Activity className={`w-5 h-5 ${isRunning ? "text-primary animate-pulse" : "text-muted-foreground"}`} />
               <span className="font-display text-lg tracking-widest uppercase">
-                {status?.running ? "SYS.ONLINE" : "SYS.OFFLINE"}
+                {isRunning ? "SYS.ONLINE" : "SYS.OFFLINE"}
               </span>
             </div>
+
             {status?.mode && (
               <Badge variant="outline" className={`font-display text-sm tracking-widest px-3 py-1 ${status.mode === 'live' ? 'border-destructive text-destructive glow-text-red' : 'border-primary text-primary glow-text'}`}>
                 {status.mode.toUpperCase()} MODE

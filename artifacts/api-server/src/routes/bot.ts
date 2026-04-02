@@ -1,12 +1,15 @@
 import { Router } from "express";
 import fs from "fs";
 import path from "path";
+import { exec, spawn } from "child_process";
 
 const router = Router();
 
 const WORKSPACE_ROOT = path.resolve(process.cwd(), "../..");
 const BOT_STATE_FILE = path.join(WORKSPACE_ROOT, "solana-bot/bot_state.json");
 const TRADES_FILE = path.join(WORKSPACE_ROOT, "solana-bot/trades.json");
+const BOT_PID_FILE = path.join(WORKSPACE_ROOT, "solana-bot/.bot.pid");
+const BOT_DIR = path.join(WORKSPACE_ROOT, "solana-bot");
 
 function readJson(filePath: string): unknown {
   try {
@@ -17,11 +20,21 @@ function readJson(filePath: string): unknown {
   }
 }
 
-router.get("/bot/status", (_req, res) => {
-  const state = readJson(BOT_STATE_FILE);
+function isBotRunning(): Promise<boolean> {
+  return new Promise((resolve) => {
+    exec("pgrep -f 'python3 bot.py'", (err, stdout) => {
+      resolve(!err && stdout.trim().length > 0);
+    });
+  });
+}
+
+router.get("/bot/status", async (_req, res) => {
+  const state = readJson(BOT_STATE_FILE) as Record<string, unknown> | null;
+  const running = await isBotRunning();
+
   if (!state) {
     return res.json({
-      running: false,
+      running,
       mode: "paper",
       cycle: 0,
       timestamp: new Date().toISOString(),
@@ -34,7 +47,7 @@ router.get("/bot/status", (_req, res) => {
       trends: {},
     });
   }
-  res.json(state);
+  res.json({ ...state, running });
 });
 
 router.get("/bot/trades", (_req, res) => {
@@ -64,6 +77,39 @@ router.get("/bot/summary", (_req, res) => {
     buy_count: buyCount,
     sell_count: sellCount,
     last_trade_at: lastTrade?.["timestamp"] ?? null,
+  });
+});
+
+router.post("/bot/stop", (_req, res) => {
+  exec("pkill -SIGTERM -f 'python3 bot.py'", (err) => {
+    if (err) {
+      return res.status(200).json({ ok: true, message: "Bot was not running" });
+    }
+    try { fs.unlinkSync(BOT_PID_FILE); } catch {}
+    res.json({ ok: true, message: "Bot stopped" });
+  });
+});
+
+router.post("/bot/start", (req, res) => {
+  const mode = req.body?.mode === "paper" ? "--paper" : "--live";
+
+  exec("pgrep -f 'python3 bot.py'", (err, stdout) => {
+    if (!err && stdout.trim().length > 0) {
+      return res.status(409).json({ ok: false, message: "Bot is already running" });
+    }
+
+    const child = spawn("python3", ["bot.py", mode], {
+      cwd: BOT_DIR,
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+
+    try {
+      fs.writeFileSync(BOT_PID_FILE, String(child.pid));
+    } catch {}
+
+    res.json({ ok: true, message: `Bot started in ${mode === "--live" ? "live" : "paper"} mode`, pid: child.pid });
   });
 });
 
