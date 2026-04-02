@@ -1,15 +1,32 @@
 import { Router } from "express";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { exec, spawn } from "child_process";
 
 const router = Router();
 
-const WORKSPACE_ROOT = path.resolve(process.cwd(), "../..");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const WORKSPACE_ROOT = path.resolve(__dirname, "../../..");
 const BOT_STATE_FILE = path.join(WORKSPACE_ROOT, "solana-bot/bot_state.json");
 const TRADES_FILE = path.join(WORKSPACE_ROOT, "solana-bot/trades.json");
 const BOT_PID_FILE = path.join(WORKSPACE_ROOT, "solana-bot/.bot.pid");
 const BOT_DIR = path.join(WORKSPACE_ROOT, "solana-bot");
+
+function killAllBotProcesses(): Promise<void> {
+  return new Promise((resolve) => {
+    exec("pkill -9 -f 'bot.py'", () => {
+      try { fs.unlinkSync(BOT_PID_FILE); } catch {}
+      resolve();
+    });
+  });
+}
+
+killAllBotProcesses().then(() => {
+  console.log("[bot] Cleared any leftover bot processes on startup");
+});
 
 function readJson(filePath: string): unknown {
   try {
@@ -22,7 +39,7 @@ function readJson(filePath: string): unknown {
 
 function isBotRunning(): Promise<boolean> {
   return new Promise((resolve) => {
-    exec("pgrep -f 'python3 bot.py'", (err, stdout) => {
+    exec("pgrep -f 'bot.py'", (err, stdout) => {
       resolve(!err && stdout.trim().length > 0);
     });
   });
@@ -80,20 +97,11 @@ router.get("/bot/summary", (_req, res) => {
   });
 });
 
-router.post("/bot/stop", (_req, res) => {
-  exec("pgrep -f 'bot.py'", (pgrepErr, stdout) => {
-    const pids = stdout.trim().split("\n").filter(Boolean);
-    if (pgrepErr || pids.length === 0) {
-      try { fs.unlinkSync(BOT_PID_FILE); } catch {}
-      return res.json({ ok: true, message: "Bot was not running" });
-    }
-    exec(`kill -9 ${pids.join(" ")}`, () => {
-      try { fs.unlinkSync(BOT_PID_FILE); } catch {}
-      setTimeout(() => {
-        res.json({ ok: true, message: "Bot stopped" });
-      }, 1000);
-    });
-  });
+router.post("/bot/stop", async (_req, res) => {
+  await killAllBotProcesses();
+  setTimeout(() => {
+    res.json({ ok: true, message: "Bot stopped" });
+  }, 1500);
 });
 
 router.post("/bot/start", (req, res) => {
