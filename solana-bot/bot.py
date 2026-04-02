@@ -795,7 +795,7 @@ def run_bot(paper_mode: bool):
                     sig = sign_and_send(swap_resp, private_key)
                     trade_entry["tx_signature"] = sig
                     if sig:
-                        log.info("  [LIVE] ✅ %s %s — sig: %s", action, token, sig)
+                        log.info("  [LIVE] ✅ %s %s", action, token)
                         log.info("  [LIVE]    https://solscan.io/tx/%s", sig)
                     else:
                         log.error("  [LIVE] ❌ %s %s FAILED — no signature", action, token)
