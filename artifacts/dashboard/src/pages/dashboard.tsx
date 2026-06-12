@@ -10,8 +10,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 
-const formatCurrency = (val: number | undefined) => {
+const formatCurrency = (val: number | undefined, smart = false) => {
   if (val === undefined || val === null) return "$0.00";
+  if (smart && val > 0 && val < 0.01) {
+    // Show enough decimals for micro-price tokens like BONK
+    const sig = Math.ceil(-Math.log10(val)) + 2;
+    return "$" + val.toFixed(Math.min(sig, 8));
+  }
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(val);
 };
 
@@ -401,7 +406,7 @@ export default function Dashboard() {
                       </div>
                       {price !== undefined ? (
                         <span className={`font-display text-lg font-bold ${blink ? "text-primary" : "text-foreground"} transition-colors duration-300`}>
-                          {formatCurrency(price)}
+                          {formatCurrency(price, true)}
                         </span>
                       ) : (
                         <span className="font-display text-lg text-muted-foreground">—</span>
