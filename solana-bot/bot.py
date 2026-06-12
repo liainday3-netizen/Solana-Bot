@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ================================================================================
-  SOLANA JUPITER TRADING BOT
+  SOLANA JUPITER TRADING BOT  v3.0
 ================================================================================
 
   !!!!!!!!!!!!!!!!!!!!!!!!! CRITICAL RISK WARNING !!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -63,13 +63,17 @@ def parse_args() -> argparse.Namespace:
 
 load_dotenv()
 
-MAX_RISK_PER_TRADE_PCT   = 0.50    # Never risk more than 50% of balance per trade
+MAX_RISK_PER_TRADE_PCT   = 0.40    # Never risk more than 40% of balance per trade
 CIRCUIT_BREAKER_USD      = 5.00    # Stop entirely if balance drops below this
-MIN_PROFIT_THRESHOLD_PCT = 0.005   # Skip signals smaller than 0.5%
+MIN_PROFIT_THRESHOLD_PCT = 0.004   # Skip signals smaller than 0.4%
 SLIPPAGE_BPS             = 50      # 0.5% slippage tolerance
-LOOP_INTERVAL_SECONDS    = 10      # Poll every 10 seconds
-TRADE_AMOUNT_USD         = 5.00    # Fixed USDC per trade (capped at 50% of balance)
+LOOP_INTERVAL_SECONDS    = 8       # Poll every 8 seconds (faster than before)
+TRADE_AMOUNT_USD         = 5.00    # Fixed USDC per trade (capped at 40% of balance)
 STARTING_PAPER_BALANCE   = 20.00   # Virtual USD for paper mode
+HISTORY_WINDOW           = 14      # Price history cycles for EMA/RSI
+RSI_PERIOD               = 6       # RSI period (needs PERIOD+1 prices)
+RSI_OVERSOLD             = 38      # RSI below this → buy signal
+RSI_OVERBOUGHT           = 62      # RSI above this → sell signal
 
 SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
 
@@ -82,20 +86,20 @@ TOKENS = {
 }
 TOKEN_DECIMALS = {"USDC": 6, "SOL": 9, "BONK": 5, "JUP": 6, "WIF": 6}
 
-JUPITER_QUOTE_URL  = "https://quote-api.jup.ag/v6/quote"
-JUPITER_SWAP_URL   = "https://quote-api.jup.ag/v6/swap"
+JUPITER_QUOTE_URL   = "https://quote-api.jup.ag/v6/quote"
+JUPITER_SWAP_URL    = "https://quote-api.jup.ag/v6/swap"
 COINGECKO_PRICE_URL = "https://api.coingecko.com/api/v3/simple/price"
 
-# CoinGecko coin IDs for fallback pricing (when Jupiter API is unreachable)
 COINGECKO_IDS = {
     "SOL":  "solana",
     "JUP":  "jupiter-exchange-solana",
     "BONK": "bonk",
+    "WIF":  "dogwifcoin",
 }
 
 TRADE_LOG_FILE = Path("trades.json")
 BOT_STATE_FILE = Path("bot_state.json")
-FOCUS_TOKENS   = ["SOL", "JUP", "BONK"]
+FOCUS_TOKENS   = ["SOL", "JUP", "BONK", "WIF"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Logging
@@ -119,13 +123,6 @@ log = logging.getLogger("solana-bot")
 def select_mode(args: argparse.Namespace) -> bool:
     """
     Returns True = paper mode, False = live mode.
-
-    Priority:
-      --paper / --live CLI flag  →  honoured immediately, no prompt
-      no flag                    →  interactive 1/2 prompt at startup
-
-    --live shows a warning + 5-second abort window but does NOT require
-    typing a phrase; passing the flag is itself the commitment.
     """
     if args.paper:
         print("\n  [--paper] Paper mode — no real money at risk.\n")
@@ -135,7 +132,6 @@ def select_mode(args: argparse.Namespace) -> bool:
         _print_live_warning()
         return _live_countdown_and_check()
 
-    # Interactive prompt
     env_default_paper = os.getenv("PAPER_MODE", "true").lower() in ("true", "1", "yes")
     _print_mode_menu(env_default_paper)
 
@@ -161,7 +157,7 @@ def _print_mode_menu(default_paper: bool):
     default_label = "paper" if default_paper else "live"
     print()
     print("=" * 72)
-    print("  SOLANA JUPITER TRADING BOT")
+    print("  SOLANA JUPITER TRADING BOT  v3.0")
     print("=" * 72)
     print()
     print("  Select trading mode:")
@@ -192,7 +188,7 @@ def _print_live_warning():
 
 def _live_countdown_and_check() -> bool:
     """
-    Verify required .env keys exist, then give a 5-second abort window.
+    Verify required env keys exist, then give a 5-second abort window.
     Returns False (= live mode) on success, True (= paper fallback) on failure.
     """
     missing = []
@@ -202,18 +198,18 @@ def _live_countdown_and_check() -> bool:
         missing.append("PRIVATE_KEY")
 
     if missing:
-        print("  ERROR: The following keys are missing from your .env file:")
+        print("  ERROR: The following keys are missing from your environment:")
         for key in missing:
             print(f"    • {key}")
         print()
         print("  Cannot run live mode without wallet credentials.")
-        print("  See .env.example for setup instructions.")
+        print("  Set them as Replit Secrets.")
         print("  ⚠️  NEVER share your PRIVATE_KEY with anyone.")
         print()
         print("  Falling back to paper mode.\n")
-        return True   # paper
+        return True
 
-    print("  Wallet keys found in .env.")
+    print("  Wallet keys found in environment.")
     print()
     try:
         for i in range(5, 0, -1):
@@ -221,11 +217,11 @@ def _live_countdown_and_check() -> bool:
             time.sleep(1)
     except KeyboardInterrupt:
         print("\n\n  Aborted — switching to paper mode.\n")
-        return True  # paper
+        return True
 
     print()
     print("  ⚠️  LIVE MODE ACTIVE — real money is now at risk.\n")
-    return False   # live
+    return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -260,28 +256,32 @@ def save_bot_state(
     total_trades: int,
     start_time: "datetime.datetime",
     trends: dict,
+    rsi_values: dict | None = None,
+    signals: dict | None = None,
 ):
     pnl = total_value - starting_value
     pnl_pct = (pnl / starting_value * 100) if starting_value > 0 else 0
     elapsed = (datetime.datetime.utcnow() - start_time).total_seconds()
     state = {
-        "running":        True,
-        "mode":           mode,
-        "cycle":          cycle,
-        "timestamp":      datetime.datetime.utcnow().isoformat() + "Z",
-        "prices":         prices,
+        "running":         True,
+        "mode":            mode,
+        "cycle":           cycle,
+        "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
+        "prices":          prices,
         "wallet": {
             "usdc":             round(wallet_usdc, 6),
             "sol":              round(wallet_sol, 6),
             "holdings":         {k: round(v, 6) for k, v in holdings.items()},
             "total_value_usdc": round(total_value, 6),
         },
-        "starting_value": round(starting_value, 6),
-        "pnl_usd":        round(pnl, 6),
-        "pnl_pct":        round(pnl_pct, 4),
-        "total_trades":   total_trades,
+        "starting_value":  round(starting_value, 6),
+        "pnl_usd":         round(pnl, 6),
+        "pnl_pct":         round(pnl_pct, 4),
+        "total_trades":    total_trades,
         "runtime_seconds": round(elapsed, 1),
-        "trends":         {k: round(v * 100, 4) for k, v in trends.items() if v is not None},
+        "trends":          {k: round(v * 100, 4) for k, v in trends.items() if v is not None},
+        "rsi":             rsi_values or {},
+        "signals":         signals or {},
     }
     try:
         BOT_STATE_FILE.write_text(json.dumps(state, indent=2))
@@ -290,7 +290,7 @@ def save_bot_state(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Solana RPC helpers (no extra packages — raw JSON-RPC)
+# Solana RPC helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _rpc(method: str, params: list) -> dict | None:
@@ -305,9 +305,6 @@ def _rpc(method: str, params: list) -> dict | None:
 
 
 def get_live_usdc_balance(public_key: str) -> float:
-    """
-    Returns the on-chain USDC balance in human-readable USD for the wallet.
-    """
     result = _rpc("getTokenAccountsByOwner", [
         public_key,
         {"mint": TOKENS["USDC"]},
@@ -325,9 +322,6 @@ def get_live_usdc_balance(public_key: str) -> float:
 
 
 def get_live_token_balance(public_key: str, token_symbol: str) -> float:
-    """
-    Returns the on-chain balance of a SPL token in human-readable units.
-    """
     if token_symbol == "SOL":
         result = _rpc("getBalance", [public_key])
         if result is None:
@@ -348,6 +342,19 @@ def get_live_token_balance(public_key: str, token_symbol: str) -> float:
         info = acct.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
         ui_amount = info.get("tokenAmount", {}).get("uiAmount", 0.0)
         total += ui_amount or 0.0
+    return total
+
+
+def get_live_portfolio_value(public_key: str, prices: dict[str, float]) -> float:
+    """Return total portfolio value in USDC including all token holdings."""
+    usdc = get_live_usdc_balance(public_key)
+    total = usdc
+    for token in FOCUS_TOKENS:
+        if token == "USDC":
+            continue
+        bal = get_live_token_balance(public_key, token)
+        price = prices.get(token, 0.0)
+        total += bal * price
     return total
 
 
@@ -384,18 +391,16 @@ def raw_to_human(raw_amount: int, token: str) -> float:
     return raw_amount / 10 ** TOKEN_DECIMALS[token]
 
 
-# Cache so we don't hammer CoinGecko every 10s (free tier: ~30 req/min)
 _cg_cache: dict[str, float] = {}
 _cg_cache_ts: float = 0.0
-_CG_CACHE_TTL = 60.0  # seconds
+_CG_CACHE_TTL = 60.0
 
 
 def get_prices_coingecko(symbols: list[str]) -> dict[str, float]:
-    """Batch-fetch USD prices from CoinGecko, cached for 60 s to respect free-tier limits."""
+    """Batch-fetch USD prices from CoinGecko, cached 60s."""
     global _cg_cache, _cg_cache_ts
 
     now = time.monotonic()
-    # Return cached result if it's fresh and covers all requested symbols
     if _cg_cache and (now - _cg_cache_ts) < _CG_CACHE_TTL and all(s in _cg_cache for s in symbols):
         return {s: _cg_cache[s] for s in symbols}
 
@@ -415,13 +420,11 @@ def get_prices_coingecko(symbols: list[str]) -> dict[str, float]:
             cg_id = COINGECKO_IDS.get(sym)
             if cg_id and cg_id in data:
                 result[sym] = float(data[cg_id]["usd"])
-        # Update cache
         _cg_cache.update(result)
         _cg_cache_ts = now
         return result
     except Exception as exc:
         log.warning("CoinGecko price error: %s", exc)
-        # Return stale cache rather than nothing, if available
         if _cg_cache:
             log.info("  Using stale CoinGecko cache (age %.0fs)", now - _cg_cache_ts)
             return {s: _cg_cache[s] for s in symbols if s in _cg_cache}
@@ -429,7 +432,7 @@ def get_prices_coingecko(symbols: list[str]) -> dict[str, float]:
 
 
 def get_token_price_in_usdc(token_symbol: str) -> float | None:
-    """Fetch price via Jupiter Quote API. Returns None on failure (caller handles fallback)."""
+    """Fetch price via Jupiter Quote API. Returns None on failure."""
     if token_symbol == "USDC":
         return 1.0
     quote = get_quote(
@@ -447,11 +450,13 @@ def get_token_price_in_usdc(token_symbol: str) -> float | None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Strategy
+# Strategy — EMA + RSI
 # ─────────────────────────────────────────────────────────────────────────────
 
 class PriceHistory:
-    def __init__(self, window: int = 6):
+    """Rolling price history with EMA trend and RSI calculation."""
+
+    def __init__(self, window: int = HISTORY_WINDOW):
         self.window = window
         self.prices: dict[str, list[float]] = {}
 
@@ -462,27 +467,98 @@ class PriceHistory:
             bucket.pop(0)
 
     def trend(self, token: str) -> float | None:
+        """Simple momentum: (latest - oldest) / oldest over full window."""
         bucket = self.prices.get(token, [])
         if len(bucket) < 2 or bucket[0] == 0:
             return None
         return (bucket[-1] - bucket[0]) / bucket[0]
 
+    def ema_trend(self, token: str, alpha: float = 0.3) -> float | None:
+        """
+        EMA-smoothed trend.
+        Computes EMA over the window, returns (latest_price - EMA) / EMA.
+        A positive result means price is above its EMA (bullish).
+        """
+        bucket = self.prices.get(token, [])
+        if len(bucket) < 3:
+            return None
+        ema = bucket[0]
+        for price in bucket[1:]:
+            ema = alpha * price + (1 - alpha) * ema
+        if ema == 0:
+            return None
+        return (bucket[-1] - ema) / ema
+
+    def rsi(self, token: str, period: int = RSI_PERIOD) -> float | None:
+        """
+        Relative Strength Index (RSI).
+        Returns a value 0–100. >62 = overbought, <38 = oversold.
+        """
+        bucket = self.prices.get(token, [])
+        if len(bucket) < period + 1:
+            return None
+        changes = [bucket[i] - bucket[i - 1] for i in range(1, len(bucket))]
+        recent = changes[-period:]
+        gains  = [c for c in recent if c > 0]
+        losses = [abs(c) for c in recent if c < 0]
+        avg_gain = sum(gains) / period
+        avg_loss = sum(losses) / period
+        if avg_loss == 0:
+            return 100.0
+        rs = avg_gain / avg_loss
+        return 100.0 - (100.0 / (1.0 + rs))
+
 
 def decide_trade(
     token: str,
-    trend_pct: float,
+    ema_trend_pct: float,
+    rsi_val: float | None,
     current_price: float,
     holdings_token: float,
     balance_usdc: float,
 ) -> tuple[str, str, float]:
+    """
+    Enhanced decision logic using EMA trend + RSI confirmation.
+
+    BUY conditions (ALL must be true):
+      - EMA trend > MIN_PROFIT_THRESHOLD_PCT  (upward momentum)
+      - RSI < RSI_OVERBOUGHT or RSI unavailable (not already overbought)
+      - RSI < 55 preferred (confirm early entry) or trend is strong
+
+    SELL conditions (ALL must be true):
+      - EMA trend < -MIN_PROFIT_THRESHOLD_PCT  (downward momentum)
+      - RSI > RSI_OVERSOLD or RSI unavailable (not already oversold)
+
+    RSI extreme override:
+      - RSI > RSI_OVERBOUGHT → force SELL if holding
+      - RSI < RSI_OVERSOLD   → force BUY if have balance (ignore trend)
+    """
     if balance_usdc < CIRCUIT_BREAKER_USD:
         return "HOLD", "circuit-breaker: balance too low", 0.0
-    if trend_pct > MIN_PROFIT_THRESHOLD_PCT and balance_usdc >= TRADE_AMOUNT_USD:
+
+    rsi_str = f"RSI={rsi_val:.1f}" if rsi_val is not None else "RSI=n/a"
+
+    # RSI extreme oversold → buy regardless of trend
+    if rsi_val is not None and rsi_val < RSI_OVERSOLD and balance_usdc >= TRADE_AMOUNT_USD:
         amount = min(TRADE_AMOUNT_USD, balance_usdc * MAX_RISK_PER_TRADE_PCT)
-        return "BUY", f"uptrend {trend_pct*100:.2f}%", amount
-    if trend_pct < -MIN_PROFIT_THRESHOLD_PCT and holdings_token > 0:
-        return "SELL", f"downtrend {trend_pct*100:.2f}%", holdings_token * current_price
-    return "HOLD", f"no signal (trend {trend_pct*100:.2f}%)", 0.0
+        return "BUY", f"RSI oversold ({rsi_str}) trend={ema_trend_pct*100:.2f}%", amount
+
+    # RSI extreme overbought → sell regardless of trend
+    if rsi_val is not None and rsi_val > RSI_OVERBOUGHT and holdings_token > 0:
+        return "SELL", f"RSI overbought ({rsi_str}) trend={ema_trend_pct*100:.2f}%", holdings_token * current_price
+
+    # EMA trend BUY
+    if ema_trend_pct > MIN_PROFIT_THRESHOLD_PCT and balance_usdc >= TRADE_AMOUNT_USD:
+        if rsi_val is None or rsi_val < RSI_OVERBOUGHT:
+            amount = min(TRADE_AMOUNT_USD, balance_usdc * MAX_RISK_PER_TRADE_PCT)
+            return "BUY", f"uptrend {ema_trend_pct*100:.2f}% {rsi_str}", amount
+
+    # EMA trend SELL
+    if ema_trend_pct < -MIN_PROFIT_THRESHOLD_PCT and holdings_token > 0:
+        if rsi_val is None or rsi_val > RSI_OVERSOLD:
+            return "SELL", f"downtrend {ema_trend_pct*100:.2f}% {rsi_str}", holdings_token * current_price
+
+    return "HOLD", f"no signal (trend={ema_trend_pct*100:.2f}% {rsi_str})", 0.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -573,7 +649,6 @@ def sign_and_send(swap_response: dict, private_key_b58: str) -> str | None:
         sig = str(result.value)
         log.info("[LIVE] Broadcast OK — sig: %s", sig)
 
-        # Poll for confirmation (~30 s)
         for attempt in range(10):
             time.sleep(3)
             status = client.get_signature_statuses([result.value])
@@ -601,7 +676,7 @@ def sign_and_send(swap_response: dict, private_key_b58: str) -> str | None:
 
 def print_banner(paper_mode: bool, live_usdc: float | None = None):
     print("=" * 72)
-    print("  SOLANA JUPITER TRADING BOT")
+    print("  SOLANA JUPITER TRADING BOT  v3.0")
     print("=" * 72)
     print()
     if paper_mode:
@@ -610,12 +685,14 @@ def print_banner(paper_mode: bool, live_usdc: float | None = None):
         bal_str = f"${live_usdc:.4f}" if live_usdc is not None else "(fetching...)"
         print(f"  ⚠️   LIVE MODE — wallet USDC balance: {bal_str}")
     print()
-    print(f"  Max risk per trade : {MAX_RISK_PER_TRADE_PCT*100:.0f}% of balance")
-    print(f"  Circuit breaker    : stop below ${CIRCUIT_BREAKER_USD:.2f}")
-    print(f"  Min signal         : {MIN_PROFIT_THRESHOLD_PCT*100:.1f}% price move")
-    print(f"  Trade size         : ${TRADE_AMOUNT_USD:.2f} USDC")
-    print(f"  Poll interval      : {LOOP_INTERVAL_SECONDS}s")
-    print(f"  Trade log          : {TRADE_LOG_FILE}")
+    print(f"  Strategy       : EMA({HISTORY_WINDOW}) + RSI({RSI_PERIOD})")
+    print(f"  Tokens         : {', '.join(FOCUS_TOKENS)}")
+    print(f"  Max risk/trade : {MAX_RISK_PER_TRADE_PCT*100:.0f}% of balance")
+    print(f"  Circuit breaker: stop below ${CIRCUIT_BREAKER_USD:.2f}")
+    print(f"  Min signal     : {MIN_PROFIT_THRESHOLD_PCT*100:.1f}% EMA deviation")
+    print(f"  RSI thresholds : <{RSI_OVERSOLD} buy  >{RSI_OVERBOUGHT} sell")
+    print(f"  Trade size     : ${TRADE_AMOUNT_USD:.2f} USDC")
+    print(f"  Poll interval  : {LOOP_INTERVAL_SECONDS}s")
     print()
     print("  Press Ctrl+C to stop.")
     print("=" * 72)
@@ -634,9 +711,8 @@ def run_bot(paper_mode: bool):
         log.error("WALLET_PUBLIC_KEY missing — falling back to paper mode.")
         paper_mode = True
 
-    # Initial balance fetch for banner (live mode only)
     live_usdc_balance: float = 0.0
-    live_sol_balance: float = 0.0
+    live_sol_balance: float  = 0.0
     if not paper_mode and public_key:
         fetched = get_live_usdc_balance(public_key)
         live_usdc_balance = fetched if fetched is not None else 0.0
@@ -644,7 +720,7 @@ def run_bot(paper_mode: bool):
         live_sol_balance = fetched_sol if fetched_sol is not None else 0.0
 
     wallet  = PaperWallet() if paper_mode else None
-    history = PriceHistory(window=6)
+    history = PriceHistory(window=HISTORY_WINDOW)
     label   = "PAPER" if paper_mode else "LIVE"
 
     start_time        = datetime.datetime.utcnow()
@@ -662,16 +738,14 @@ def run_bot(paper_mode: bool):
             # ── 1. Prices ────────────────────────────────────────────────────
             prices: dict[str, float] = {}
 
-            # Try Jupiter first for all tokens
             for token in FOCUS_TOKENS:
                 price = get_token_price_in_usdc(token)
                 if price is not None:
                     prices[token] = price
 
-            # Batch CoinGecko fallback for any tokens Jupiter couldn't serve
-            missing = [t for t in FOCUS_TOKENS if t not in prices]
-            if missing:
-                cg_prices = get_prices_coingecko(missing)
+            missing_tokens = [t for t in FOCUS_TOKENS if t not in prices]
+            if missing_tokens:
+                cg_prices = get_prices_coingecko(missing_tokens)
                 for token, price in cg_prices.items():
                     prices[token] = price
                 if cg_prices:
@@ -680,9 +754,11 @@ def run_bot(paper_mode: bool):
             for token in FOCUS_TOKENS:
                 if token in prices:
                     history.update(token, prices[token])
-                    log.info("  %s  $%.6f", token, prices[token])
+                    rsi_now = history.rsi(token)
+                    rsi_str = f"RSI={rsi_now:.1f}" if rsi_now is not None else "RSI=warming"
+                    log.info("  %s  $%.6f  %s", token, prices[token], rsi_str)
                 else:
-                    log.warning("  %s  — price unavailable (Jupiter + CoinGecko both failed)", token)
+                    log.warning("  %s  — price unavailable", token)
 
             # ── 2. Wallet state ──────────────────────────────────────────────
             if paper_mode and wallet:
@@ -713,17 +789,27 @@ def run_bot(paper_mode: bool):
                         for t in FOCUS_TOKENS
                     )
                     if not any_holdings:
+                        log.error("  🚨 CIRCUIT BREAKER — USDC below $%.2f, no holdings. Stopping.", CIRCUIT_BREAKER_USD)
                         break
 
             # ── 3. Strategy & execution ──────────────────────────────────────
+            rsi_snapshot: dict[str, float] = {}
+            signal_snapshot: dict[str, str] = {}
+
             for token in FOCUS_TOKENS:
                 if token not in prices:
                     continue
 
-                trend = history.trend(token)
-                if trend is None:
+                ema_trend = history.ema_trend(token)
+                rsi_val   = history.rsi(token)
+
+                if rsi_val is not None:
+                    rsi_snapshot[token] = round(rsi_val, 1)
+
+                if ema_trend is None:
                     n = len(history.prices.get(token, []))
                     log.info("  %s  warming up (%d/%d)...", token, n, history.window)
+                    signal_snapshot[token] = "WARMING"
                     continue
 
                 current_price = prices[token]
@@ -738,8 +824,9 @@ def run_bot(paper_mode: bool):
                     continue
 
                 action, reason, trade_usdc = decide_trade(
-                    token, trend, current_price, holdings, balance_usdc,
+                    token, ema_trend, rsi_val, current_price, holdings, balance_usdc,
                 )
+                signal_snapshot[token] = action
                 log.info("  %s  %s — %s", token, action, reason)
 
                 if action == "HOLD":
@@ -753,11 +840,11 @@ def run_bot(paper_mode: bool):
                     "token":      token,
                     "action":     action,
                     "price_usdc": current_price,
-                    "trend_pct":  round(trend * 100, 4),
+                    "trend_pct":  round(ema_trend * 100, 4),
+                    "rsi":        round(rsi_val, 1) if rsi_val is not None else None,
                     "reason":     reason,
                 }
 
-                # ── Paper execution ──────────────────────────────────────────
                 if paper_mode and wallet:
                     if action == "BUY":
                         bought = wallet.buy(token, trade_usdc, current_price)
@@ -771,7 +858,6 @@ def run_bot(paper_mode: bool):
                                            usdc_received=round(received, 6))
                     save_trade(trade_entry)
 
-                # ── Live execution ───────────────────────────────────────────
                 else:
                     if action == "BUY":
                         raw_in = usdc_to_raw(trade_usdc)
@@ -801,19 +887,26 @@ def run_bot(paper_mode: bool):
                         log.error("  [LIVE] ❌ %s %s FAILED — no signature", action, token)
                     save_trade(trade_entry)
 
-            # ── 4. Persist state for dashboard ───────────────────────────────
+            # ── 4. Persist state ─────────────────────────────────────────────
             if paper_mode and wallet:
-                _wallet_usdc  = wallet.usdc
-                _wallet_sol   = 0.0
-                _holdings     = dict(wallet.holdings)
-                _total_value  = wallet.total_value_usdc(prices)
+                _wallet_usdc = wallet.usdc
+                _wallet_sol  = 0.0
+                _holdings    = dict(wallet.holdings)
+                _total_value = wallet.total_value_usdc(prices)
             else:
-                _wallet_usdc  = live_usdc_balance
-                _wallet_sol   = live_sol_balance
-                _holdings     = {}
-                _total_value  = live_usdc_balance
+                _wallet_usdc = live_usdc_balance
+                _wallet_sol  = live_sol_balance
+                _holdings    = {}
+                # Fix: include value of any token holdings in live mode
+                _total_value = live_usdc_balance
+                if public_key and prices:
+                    for tok in FOCUS_TOKENS:
+                        tok_bal = get_live_token_balance(public_key, tok) if public_key else 0.0
+                        _total_value += tok_bal * prices.get(tok, 0.0)
+                        if tok_bal > 0:
+                            _holdings[tok] = tok_bal
 
-            _trends = {t: history.trend(t) for t in FOCUS_TOKENS}
+            _trends = {t: history.ema_trend(t) for t in FOCUS_TOKENS}
             save_bot_state(
                 cycle=cycle,
                 mode=label.lower(),
@@ -826,13 +919,14 @@ def run_bot(paper_mode: bool):
                 total_trades=total_trades_done,
                 start_time=start_time,
                 trends={k: v for k, v in _trends.items() if v is not None},
+                rsi_values=rsi_snapshot,
+                signals=signal_snapshot,
             )
 
             log.info("  Sleeping %ds...\n", LOOP_INTERVAL_SECONDS)
             time.sleep(LOOP_INTERVAL_SECONDS)
 
     finally:
-        # ── Exit summary ─────────────────────────────────────────────────────
         elapsed = datetime.datetime.utcnow() - start_time
         minutes = int(elapsed.total_seconds() // 60)
         seconds = int(elapsed.total_seconds() % 60)
@@ -844,9 +938,8 @@ def run_bot(paper_mode: bool):
         else:
             end_value = starting_value
 
-        pnl        = end_value - starting_value
-        pnl_pct    = (pnl / starting_value * 100) if starting_value > 0 else 0
-        pnl_sign   = "+" if pnl >= 0 else ""
+        pnl     = end_value - starting_value
+        pnl_pct = (pnl / starting_value * 100) if starting_value > 0 else 0
         all_trades = load_trade_log()
 
         print()
@@ -855,6 +948,9 @@ def run_bot(paper_mode: bool):
         print("=" * 72)
         print(f"  Mode          : {label}")
         print(f"  Runtime       : {minutes}m {seconds}s  ({cycle} cycles)")
+        print(f"  Starting value: ${starting_value:.4f}")
+        print(f"  Ending value  : ${end_value:.4f}")
+        print(f"  P&L           : ${pnl:+.4f}  ({pnl_pct:+.2f}%)")
         print(f"  Trades this session : {total_trades_done}")
         print(f"  All trades logged   : {len(all_trades)}  ({TRADE_LOG_FILE})")
         print("=" * 72)
@@ -871,5 +967,5 @@ if __name__ == "__main__":
         paper_mode = select_mode(args)
         run_bot(paper_mode)
     except KeyboardInterrupt:
-        pass   # summary already printed by run_bot's finally block
+        pass
     sys.exit(0)

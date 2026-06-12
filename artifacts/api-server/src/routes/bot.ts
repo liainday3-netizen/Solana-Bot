@@ -13,6 +13,7 @@ const WORKSPACE_ROOT = path.resolve(__dirname, "../../..");
 const BOT_STATE_FILE = path.join(WORKSPACE_ROOT, "solana-bot/bot_state.json");
 const TRADES_FILE    = path.join(WORKSPACE_ROOT, "solana-bot/trades.json");
 const BOT_PID_FILE   = path.join(WORKSPACE_ROOT, "solana-bot/.bot.pid");
+const BOT_LOG_FILE   = path.join(WORKSPACE_ROOT, "solana-bot/bot.log");
 const BOT_DIR        = path.join(WORKSPACE_ROOT, "solana-bot");
 
 console.log(`[bot] WORKSPACE_ROOT = ${WORKSPACE_ROOT}`);
@@ -64,6 +65,8 @@ router.get("/bot/status", async (_req, res) => {
       pnl_pct: 0,
       total_trades: 0,
       trends: {},
+      rsi: {},
+      signals: {},
     });
   }
   res.json({ ...state, running });
@@ -83,18 +86,32 @@ router.get("/bot/summary", (_req, res) => {
   const sellCount = tradeList.filter((t: unknown) => (t as Record<string, unknown>)["action"] === "SELL").length;
   const lastTrade = tradeList[tradeList.length - 1] as Record<string, unknown> | undefined;
   res.json({
-    total_trades:   tradeList.length,
+    total_trades:    tradeList.length,
     runtime_seconds: state?.["runtime_seconds"] ?? 0,
-    cycles:         state?.["cycle"] ?? 0,
-    starting_value: state?.["starting_value"] ?? 20,
-    current_value:  (state?.["wallet"] as Record<string, unknown> | undefined)?.["total_value_usdc"] ?? 0,
-    pnl_usd:        state?.["pnl_usd"] ?? 0,
-    pnl_pct:        state?.["pnl_pct"] ?? 0,
-    mode:           state?.["mode"] ?? "live",
-    buy_count:      buyCount,
-    sell_count:     sellCount,
-    last_trade_at:  lastTrade?.["timestamp"] ?? null,
+    cycles:          state?.["cycle"] ?? 0,
+    starting_value:  state?.["starting_value"] ?? 20,
+    current_value:   (state?.["wallet"] as Record<string, unknown> | undefined)?.["total_value_usdc"] ?? 0,
+    pnl_usd:         state?.["pnl_usd"] ?? 0,
+    pnl_pct:         state?.["pnl_pct"] ?? 0,
+    mode:            state?.["mode"] ?? "live",
+    buy_count:       buyCount,
+    sell_count:      sellCount,
+    last_trade_at:   lastTrade?.["timestamp"] ?? null,
   });
+});
+
+router.get("/bot/log", (_req, res) => {
+  try {
+    if (!fs.existsSync(BOT_LOG_FILE)) {
+      return res.json({ lines: [] });
+    }
+    const content = fs.readFileSync(BOT_LOG_FILE, "utf8");
+    const lines = content.split("\n").filter(Boolean);
+    const last100 = lines.slice(-100);
+    return res.json({ lines: last100 });
+  } catch {
+    return res.json({ lines: [] });
+  }
 });
 
 router.post("/bot/stop", async (_req, res) => {
@@ -110,7 +127,7 @@ router.post("/bot/start", async (_req, res) => {
     return res.status(409).json({ ok: false, message: "Bot is already running" });
   }
 
-  const walletKey = process.env["WALLET_PUBLIC_KEY"];
+  const walletKey  = process.env["WALLET_PUBLIC_KEY"];
   const privateKey = process.env["PRIVATE_KEY"];
 
   if (!walletKey || !privateKey) {
@@ -142,7 +159,7 @@ router.post("/bot/start", async (_req, res) => {
   if (!running) {
     return res.status(500).json({
       ok: false,
-      message: "Bot process exited immediately. Check that Python dependencies are installed.",
+      message: "Bot process exited immediately. Check bot.log for details.",
     });
   }
 
