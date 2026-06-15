@@ -137,6 +137,15 @@ router.post("/bot/start", async (_req, res) => {
     });
   }
 
+  // Ensure Python packages are installed in production (GCE has no pre-installed pip packages)
+  await new Promise<void>((resolve) => {
+    exec("python3 -m pip install -q -r requirements.txt", { cwd: BOT_DIR }, (err) => {
+      if (err) console.log("[bot] pip install warning:", err.message);
+      else console.log("[bot] Python packages verified");
+      resolve();
+    });
+  });
+
   const child = spawn("python3", ["bot.py", "--live"], {
     cwd: BOT_DIR,
     detached: true,
