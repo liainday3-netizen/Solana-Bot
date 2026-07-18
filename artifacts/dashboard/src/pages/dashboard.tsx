@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useGetBotSummary, useGetBotTrades, getGetBotSummaryQueryKey, getGetBotTradesQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -75,13 +75,10 @@ export default function Dashboard() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  // Real-time state via SSE (falls back to polling if SSE drops)
   const [state, setState] = useState<BotState | null>(null);
-  const [sseConnected, setSseConnected] = useState(false);
-  const sseRef = useRef<EventSource | null>(null);
+  const [liveAge, setLiveAge] = useState(0); // seconds since last successful fetch
 
-  // Polling fallback & summary/trades still use React Query
-  const { data: summary } = useGetBotSummary({ query: { refetchInterval: sseConnected ? 30000 : 5000, queryKey: getGetBotSummaryQueryKey() } });
+  const { data: summary } = useGetBotSummary({ query: { refetchInterval: 5000, queryKey: getGetBotSummaryQueryKey() } });
   const { data: trades, isLoading: tradesLoading } = useGetBotTrades({ query: { refetchInterval: 5000, queryKey: getGetBotTradesQueryKey() } });
 
   // Local state
@@ -96,47 +93,33 @@ export default function Dashboard() {
   const insightRef = useRef<HTMLDivElement>(null);
   const prevCycleRef = useRef(0);
 
-  // ── SSE connection ───────────────────────────────────────────────────────
-  const connectSSE = useCallback(() => {
-    if (sseRef.current) sseRef.current.close();
-    const es = new EventSource("/api/bot/stream");
-    sseRef.current = es;
-    es.onopen = () => setSseConnected(true);
-    es.onmessage = (e) => {
+  // ── 3-second polling for bot state ───────────────────────────────────────
+  useEffect(() => {
+    const poll = async () => {
       try {
-        const data = JSON.parse(e.data) as BotState;
+        const r = await fetch("/api/bot/status");
+        if (!r.ok) return;
+        const data = await r.json() as BotState;
         setState(data);
+        setLiveAge(0);
         if (data.cycle !== prevCycleRef.current) {
           prevCycleRef.current = data.cycle;
           setBlink(true);
-          setTimeout(() => setBlink(false), 300);
+          setTimeout(() => setBlink(false), 400);
           setPnlHistory(prev => [...prev, { t: Date.now(), pnl: data.pnl_usd }].slice(-60));
         }
       } catch {}
     };
-    es.onerror = () => {
-      setSseConnected(false);
-      es.close();
-      setTimeout(connectSSE, 4000);
-    };
+    poll();
+    const id = setInterval(poll, 3000);
+    return () => clearInterval(id);
   }, []);
 
+  // ── Staleness ticker ─────────────────────────────────────────────────────
   useEffect(() => {
-    connectSSE();
-    return () => sseRef.current?.close();
-  }, [connectSSE]);
-
-  // Fallback poll when SSE not connected
-  useEffect(() => {
-    if (sseConnected) return;
-    const id = setInterval(async () => {
-      try {
-        const r = await fetch("/api/bot/status");
-        if (r.ok) setState(await r.json());
-      } catch {}
-    }, 5000);
+    const id = setInterval(() => setLiveAge(a => a + 1), 1000);
     return () => clearInterval(id);
-  }, [sseConnected]);
+  }, []);
 
   // ── Runtime counter ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -224,7 +207,7 @@ export default function Dashboard() {
             <p className="text-muted-foreground uppercase tracking-widest text-xs mt-1 flex items-center gap-2">
               <Crosshair className="w-3 h-3 text-primary" />
               EMA · RSI · SOL · JUP · BONK · WIF
-              <span className={`w-1.5 h-1.5 rounded-full ${sseConnected ? "bg-[#39ff14] animate-pulse" : "bg-yellow-500"}`} title={sseConnected ? "Live stream connected" : "Polling fallback"} />
+              <span className={`w-1.5 h-1.5 rounded-full ${liveAge < 6 ? "bg-[#39ff14] animate-pulse" : liveAge < 15 ? "bg-yellow-500" : "bg-destructive"}`} title={`Data updated ${liveAge}s ago`} />
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
