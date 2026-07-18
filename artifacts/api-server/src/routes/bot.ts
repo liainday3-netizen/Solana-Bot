@@ -44,13 +44,40 @@ function ensureWatcher() {
 }
 ensureWatcher();
 
-// ── Startup cleanup ────────────────────────────────────────────────────────
+// ── PID-based process management (no shell, no pattern-matching issues) ────
+function readPid(): number | null {
+  try {
+    const raw = fs.readFileSync(BOT_PID_FILE, "utf8").trim();
+    const pid = parseInt(raw, 10);
+    return isNaN(pid) ? null : pid;
+  } catch { return null; }
+}
+
+function pidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+function killPid(pid: number): void {
+  try { process.kill(pid, 9); } catch {}
+}
+
 function killAllBotProcesses(): Promise<void> {
   return new Promise((resolve) => {
-    exec("pkill -9 -f 'bot.py'", () => {
+    const pid = readPid();
+    if (pid) killPid(pid);
+    // Belt-and-suspenders: use spawn (not exec) so the spawned process args
+    // never include the python pattern itself
+    const killer = spawn("pkill", ["-9", "-P", String(pid ?? 0)], { stdio: "ignore" });
+    killer.on("close", () => {
       try { fs.unlinkSync(BOT_PID_FILE); } catch {}
       resolve();
     });
+    killer.on("error", () => {
+      try { fs.unlinkSync(BOT_PID_FILE); } catch {}
+      resolve();
+    });
+    // Always resolve within 1s even if pkill hangs
+    setTimeout(() => { try { fs.unlinkSync(BOT_PID_FILE); } catch {} resolve(); }, 1000);
   });
 }
 
@@ -70,9 +97,11 @@ function readJson(filePath: string): unknown {
 
 function isBotRunning(): Promise<boolean> {
   return new Promise((resolve) => {
-    exec("pgrep -f 'bot.py'", (err, stdout) => {
-      resolve(!err && stdout.trim().length > 0);
-    });
+    const pid = readPid();
+    if (pid && pidAlive(pid)) { resolve(true); return; }
+    // PID file stale or missing — confirm no process alive
+    if (pid) { try { fs.unlinkSync(BOT_PID_FILE); } catch {} }
+    resolve(false);
   });
 }
 

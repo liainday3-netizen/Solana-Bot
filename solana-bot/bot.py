@@ -724,7 +724,7 @@ def run_bot(paper_mode: bool):
     label   = "PAPER" if paper_mode else "LIVE"
 
     start_time        = datetime.datetime.utcnow()
-    starting_value    = STARTING_PAPER_BALANCE if paper_mode else live_usdc_balance
+    starting_value    = STARTING_PAPER_BALANCE if paper_mode else None  # set on first cycle once prices are known
     total_trades_done = 0
 
     print_banner(paper_mode, live_usdc_balance if not paper_mode else None)
@@ -897,14 +897,21 @@ def run_bot(paper_mode: bool):
                 _wallet_usdc = live_usdc_balance
                 _wallet_sol  = live_sol_balance
                 _holdings    = {}
-                # Fix: include value of any token holdings in live mode
-                _total_value = live_usdc_balance
+                # Total = USDC + native SOL (already refreshed) + any traded SPL tokens
+                _total_value = live_usdc_balance + live_sol_balance * prices.get("SOL", 0.0)
+                if live_sol_balance > 0:
+                    _holdings["SOL"] = live_sol_balance
                 if public_key and prices:
-                    for tok in FOCUS_TOKENS:
+                    for tok in [t for t in FOCUS_TOKENS if t != "SOL"]:
                         tok_bal = get_live_token_balance(public_key, tok) if public_key else 0.0
-                        _total_value += tok_bal * prices.get(tok, 0.0)
                         if tok_bal > 0:
+                            _total_value += tok_bal * prices.get(tok, 0.0)
                             _holdings[tok] = tok_bal
+                # Set starting_value once on the first cycle when real prices are known
+                if starting_value is None:
+                    starting_value = _total_value
+                    log.info("  [P&L] Starting portfolio value locked at $%.4f (USDC $%.4f + SOL %.4f × $%.4f)",
+                             starting_value, live_usdc_balance, live_sol_balance, prices.get("SOL", 0.0))
 
             _trends = {t: history.ema_trend(t) for t in FOCUS_TOKENS}
             save_bot_state(
@@ -934,12 +941,16 @@ def run_bot(paper_mode: bool):
         if paper_mode and wallet:
             end_value = wallet.total_value_usdc(prices if 'prices' in dir() else {})
         elif not paper_mode and public_key:
-            end_value = get_live_usdc_balance(public_key) or live_usdc_balance
+            _exit_usdc = get_live_usdc_balance(public_key) or live_usdc_balance
+            _exit_sol  = get_live_token_balance(public_key, "SOL") or live_sol_balance
+            _exit_sol_price = prices.get("SOL", 0.0) if 'prices' in dir() and prices else 0.0
+            end_value = _exit_usdc + _exit_sol * _exit_sol_price
         else:
-            end_value = starting_value
+            end_value = starting_value or live_usdc_balance
 
-        pnl     = end_value - starting_value
-        pnl_pct = (pnl / starting_value * 100) if starting_value > 0 else 0
+        _sv       = starting_value if starting_value is not None else end_value
+        pnl       = end_value - _sv
+        pnl_pct   = (pnl / _sv * 100) if _sv > 0 else 0
         all_trades = load_trade_log()
 
         print()
@@ -948,7 +959,7 @@ def run_bot(paper_mode: bool):
         print("=" * 72)
         print(f"  Mode          : {label}")
         print(f"  Runtime       : {minutes}m {seconds}s  ({cycle} cycles)")
-        print(f"  Starting value: ${starting_value:.4f}")
+        print(f"  Starting value: ${_sv:.4f}")
         print(f"  Ending value  : ${end_value:.4f}")
         print(f"  P&L           : ${pnl:+.4f}  ({pnl_pct:+.2f}%)")
         print(f"  Trades this session : {total_trades_done}")
